@@ -1,0 +1,30 @@
+{
+  "name": "specter-scraper",
+  "version": "0.1.0",
+  "description": "SPECTER BullMQ scraping engine",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node scheduler.ts",
+    "lint": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "bullmq": "^4.17.0",
+    "cheerio": "^1.2.0",
+    "dotenv": "^16.5.0",
+    "got": "^15.0.5",
+    "ioredis": "^5.6.1",
+    "playwright": "^1.60.0",
+    "playwright-extra": "^4.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "robots-parser": "^3.0.1",
+    "undici": "^8.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.3",
+    "vitest": "^4.1.7"
+  }
+}

@@ -1,0 +1,66 @@
+"""Per-customer margin from the cost rollup (Audit #4). compute_margin is pure;
+merchant_margins aggregates merchant_cost_daily over a window and joins the plan."""
+from __future__ import annotations
+
+import uuid
+from datetime import date as date_t
+
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from models.merchant_cost_daily import MerchantCostDaily
+from models.merchants import Merchant
+from services import cost_model
+
+
+def compute_margin(plan: str, costs: dict) -> dict:
+    """Pure: given a plan and summed costs by type, return the margin record."""
+    cost_to_serve = round(sum(float(v) for v in costs.values()), 6)
+    revenue = cost_model.monthly_revenue_usd(plan)
+    if revenue > 0:
+        gross_margin = (revenue - cost_to_serve) / revenue
+        margin_negative = cost_to_serve > revenue
+    else:
+        gross_margin = None                       # undefined with no modeled revenue
+        margin_negative = cost_to_serve > 0       # any spend on a $0 plan is a loss
+    return {
+        "plan": plan,
+        "revenue": revenue,
+        "cost_to_serve": cost_to_serve,
+        "by_type": {k: float(v) for k, v in costs.items()},
+        "gross_margin": gross_margin,
+        "margin_negative": margin_negative,
+    }
+
+
+async def merchant_margins(session: AsyncSession, date_from: date_t, date_to: date_t) -> list[dict]:
+    """Aggregate cost by (merchant, cost_type) over [date_from, date_to], join the
+    merchant's plan, and compute each margin record. Sorted worst-margin first."""
+    stmt = (
+        select(MerchantCostDaily.merchant_id, MerchantCostDaily.cost_type,
+               func.sum(MerchantCostDaily.cost_usd))
+        .where(MerchantCostDaily.date >= date_from, MerchantCostDaily.date <= date_to)
+        .group_by(MerchantCostDaily.merchant_id, MerchantCostDaily.cost_type)
+    )
+    rows = (await session.execute(stmt)).all()
+
+    by_merchant: dict[uuid.UUID, dict] = {}
+    for merchant_id, cost_type, total in rows:
+        by_merchant.setdefault(merchant_id, {})[cost_type] = float(total or 0)
+
+    if not by_merchant:
+        return []
+
+    plans = dict((await session.execute(
+        select(Merchant.id, Merchant.plan).where(Merchant.id.in_(list(by_merchant.keys())))
+    )).all())
+
+    out = []
+    for merchant_id, costs in by_merchant.items():
+        rec = compute_margin(plans.get(merchant_id, ""), costs)
+        rec["merchant_id"] = str(merchant_id)
+        out.append(rec)
+    # Worst first: margin-negative on top, then ascending gross margin (None treated as -inf).
+    out.sort(key=lambda r: (not r["margin_negative"],
+                            r["gross_margin"] if r["gross_margin"] is not None else float("-inf")))
+    return out

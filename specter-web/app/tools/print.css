@@ -1,0 +1,21 @@
+@media print {
+  body {
+    background: white !important;
+    color: black !important;
+  }
+
+  nav,
+  footer,
+  .no-print {
+    display: none !important;
+  }
+
+  #print-report {
+    display: block !important;
+  }
+
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}

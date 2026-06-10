@@ -1,0 +1,64 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# SPECTER monorepo — root .gitignore
+# Keeps secrets, dependencies, build output, and local caches out of git.
+# ──────────────────────────────────────────────────────────────────────────────
+
+# ── Secrets (NEVER commit) ──────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+!**/.env.example
+*.pem
+*.key
+secrets.*
+
+# ── Node / JS dependencies & build output ──────────────────────────────────
+node_modules/
+**/node_modules/
+.next/
+**/.next/
+out/
+**/out/
+dist/
+**/dist/
+build/
+**/build/
+.turbo/
+.vercel/
+*.tsbuildinfo
+next-env.d.ts
+
+# ── Python ──────────────────────────────────────────────────────────────────
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+**/.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ── Logs & runtime ──────────────────────────────────────────────────────────
+*.log
+logs/
+_*.log
+
+# ── Editor / OS / tooling ────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.claude/
+.superpowers/
+.pytest_cache/
+
+# ── Misc ──────────────────────────────────────────────────────────────────────
+*.local
+coverage/
+.cache/
+tmp/
