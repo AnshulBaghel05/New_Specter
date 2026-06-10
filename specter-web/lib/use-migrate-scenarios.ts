@@ -20,6 +20,7 @@ import {
   type LocalScenarioGroup,
 } from '@/lib/tools/migrate-scenarios'
 import { useSaveCalculation } from '@/lib/calculations-api'
+import { PREVIEW } from '@/lib/preview-data'
 
 export function useMigrateScenarios(enabled: boolean): { migrating: boolean } {
   const save = useSaveCalculation()
@@ -28,6 +29,10 @@ export function useMigrateScenarios(enabled: boolean): { migrating: boolean } {
 
   useEffect(() => {
     if (!enabled || started.current) return
+    // In preview mode there is no backend to migrate into; saves resolve
+    // optimistically without persisting, so running migration here would clear
+    // local scenarios that were never actually stored. Skip entirely.
+    if (PREVIEW) return
     if (typeof localStorage === 'undefined') return
 
     const groups = collectLocalScenarios()

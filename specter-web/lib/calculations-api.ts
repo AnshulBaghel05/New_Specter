@@ -18,6 +18,7 @@ import {
 } from '@tanstack/react-query'
 import { createClient } from '@/lib/supabase/client'
 import { ApiError } from '@/lib/api'
+import { PREVIEW } from '@/lib/preview-data'
 import { buildOpportunityFeed, type OpportunityItem, type SavedCalc } from '@/lib/tools/workspace'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
@@ -98,6 +99,27 @@ async function calcFetch<T>(path: string, options: RequestInit = {}): Promise<T>
   return payload as T
 }
 
+// ── Preview mode ──────────────────────────────────────────────────────────────
+// In NEXT_PUBLIC_PREVIEW mode the app runs with no backend, so the Workspace
+// must resolve to a clean empty state (matching the empty fixtures the rest of
+// the dashboard uses) instead of erroring against a non-existent API. Saved
+// reports start empty; mutations resolve optimistically so the UI stays live.
+
+const PREVIEW_CALCS: Calculation[] = []
+
+function previewCalculationFromSave(body: SaveCalculationInput): Calculation {
+  return {
+    id: `calc_preview_${Date.now()}`,
+    tool_name: body.tool_name,
+    name: body.name,
+    inputs: body.inputs,
+    results: body.results,
+    currency: body.currency ?? null,
+    archived: false,
+    created_at: new Date().toISOString(),
+  }
+}
+
 // ── Query keys ──────────────────────────────────────────────────────────────────
 
 export const calculationKeys = {
@@ -112,7 +134,10 @@ export function useCalculations(toolName?: string): UseQueryResult<Calculation[]
   const qs = toolName ? `?tool_name=${encodeURIComponent(toolName)}` : ''
   return useQuery({
     queryKey: calculationKeys.list(toolName),
-    queryFn: () => calcFetch<Calculation[]>(`/calculations${qs}`),
+    queryFn: () =>
+      PREVIEW
+        ? Promise.resolve(PREVIEW_CALCS)
+        : calcFetch<Calculation[]>(`/calculations${qs}`),
     retry: false,
   })
 }
@@ -120,7 +145,10 @@ export function useCalculations(toolName?: string): UseQueryResult<Calculation[]
 export function useCalculationDetail(id: string | null): UseQueryResult<Calculation, ApiError> {
   return useQuery({
     queryKey: calculationKeys.detail(id ?? ''),
-    queryFn: () => calcFetch<Calculation>(`/calculations/${id}`),
+    queryFn: () =>
+      PREVIEW
+        ? Promise.reject(new ApiError(404, { error: 'not_found' }))
+        : calcFetch<Calculation>(`/calculations/${id}`),
     enabled: !!id,
     retry: false,
   })
@@ -130,7 +158,9 @@ export function useSaveCalculation(): UseMutationResult<Calculation, ApiError, S
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (body) =>
-      calcFetch<Calculation>('/calculations', { method: 'POST', body: JSON.stringify(body) }),
+      PREVIEW
+        ? Promise.resolve(previewCalculationFromSave(body))
+        : calcFetch<Calculation>('/calculations', { method: 'POST', body: JSON.stringify(body) }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: calculationKeys.all })
     },
@@ -141,7 +171,12 @@ export function useUpdateCalculation(): UseMutationResult<Calculation, ApiError,
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ id, ...patch }) =>
-      calcFetch<Calculation>(`/calculations/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+      PREVIEW
+        ? Promise.resolve(previewCalculationFromSave({
+            tool_name: '', name: '', inputs: {}, results: {},
+            ...patch,
+          } as SaveCalculationInput))
+        : calcFetch<Calculation>(`/calculations/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: calculationKeys.all })
     },
@@ -151,7 +186,10 @@ export function useUpdateCalculation(): UseMutationResult<Calculation, ApiError,
 export function useDeleteCalculation(): UseMutationResult<void, ApiError, string> {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (id) => calcFetch<void>(`/calculations/${id}`, { method: 'DELETE' }),
+    mutationFn: (id) =>
+      PREVIEW
+        ? Promise.resolve(undefined as void)
+        : calcFetch<void>(`/calculations/${id}`, { method: 'DELETE' }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: calculationKeys.all })
     },
