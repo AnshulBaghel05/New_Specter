@@ -62,6 +62,8 @@ def make_merchant(plan: str = "recon") -> MagicMock:
     m.read_only = False
     m.razorpay_subscription_id = None
     m.max_competitors_per_sku = 3
+    m.subscription_current_end = None
+    m.subscription_cancel_at = None
     return m
 
 
@@ -363,3 +365,66 @@ class TestAddons:
         assert body["addon_type"] == "sku_100"
         assert body["razorpay_subscription_id"] == "sub_new_addon"
         session.commit.assert_awaited()
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 5. CANCEL AT PERIOD END
+# ════════════════════════════════════════════════════════════════════════════
+
+class TestCancel:
+    def test_cancel_marks_period_end_and_calls_razorpay(self, client):
+        """POST /billing/cancel → Razorpay cancel(cancel_at_cycle_end=True),
+        stamps subscription_cancel_at from the known renewal date."""
+        from datetime import datetime, timezone
+        merchant = make_merchant(plan="cipher")
+        merchant.razorpay_subscription_id = "sub_LIVE"
+        merchant.subscription_current_end = datetime(2026, 7, 10, tzinfo=timezone.utc)
+        session = AsyncMock()
+        session.commit = AsyncMock()
+        app.dependency_overrides[get_current_merchant] = override_merchant(merchant)
+        app.dependency_overrides[get_db] = override_db(session)
+
+        with patch("services.billing.cancel_subscription",
+                   new=AsyncMock(return_value=True)) as cancel:
+            resp = client.post("/billing/cancel")
+
+        assert resp.status_code == 200
+        assert resp.json()["cancel_at"] == "2026-07-10T00:00:00+00:00"
+        assert merchant.subscription_cancel_at == merchant.subscription_current_end
+        cancel.assert_awaited_once_with("sub_LIVE", cancel_at_cycle_end=True)
+        session.commit.assert_awaited()
+
+    def test_cancel_without_subscription_returns_400(self, client):
+        merchant = make_merchant(plan="free")
+        merchant.razorpay_subscription_id = None
+        app.dependency_overrides[get_current_merchant] = override_merchant(merchant)
+        app.dependency_overrides[get_db] = override_db(AsyncMock())
+        resp = client.post("/billing/cancel")
+        assert resp.status_code == 400
+        assert resp.json()["detail"]["error"] == "no_active_subscription"
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 6. LIST ADD-ONS
+# ════════════════════════════════════════════════════════════════════════════
+
+class TestListAddons:
+    def test_list_returns_merchant_addons(self, client):
+        import uuid as _uuid
+        merchant = make_merchant(plan="cipher")
+        row = MagicMock(spec=MerchantAddon)
+        row.id = _uuid.uuid4()
+        row.addon_type = "sku_50"
+        row.razorpay_subscription_id = "sub_addon_x"
+        result = MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[row]))))
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=result)
+        app.dependency_overrides[get_current_merchant] = override_merchant(merchant)
+        app.dependency_overrides[get_db] = override_db(session)
+
+        resp = client.get("/billing/addons")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert len(body) == 1
+        assert body[0]["addon_type"] == "sku_50"
+        assert body[0]["razorpay_subscription_id"] == "sub_addon_x"

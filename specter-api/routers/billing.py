@@ -75,6 +75,11 @@ class AddonOut(BaseModel):
     razorpay_subscription_id: Optional[str] = None
 
 
+class CancelOut(BaseModel):
+    cancel_at: Optional[str] = None
+    status: str = "cancel_scheduled"
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _plan_index(plan: str) -> int:
@@ -204,6 +209,32 @@ async def downgrade(
     return await apply_downgrade(session, merchant, target)
 
 
+# ── Cancel at period end ─────────────────────────────────────────────────────
+
+@router.post("/cancel", response_model=CancelOut)
+async def cancel(
+    merchant: Merchant = Depends(get_current_merchant),
+    session: AsyncSession = Depends(get_db),
+) -> CancelOut:
+    """Cancel at the end of the current billing period. The merchant keeps their
+    plan until then; auto-renew stops. The actual drop to `free` happens when
+    Razorpay POSTs subscription.cancelled to the webhook."""
+    sub_id = merchant.razorpay_subscription_id
+    if not sub_id:
+        raise HTTPException(400, detail={"error": "no_active_subscription"})
+
+    ok = await billing.cancel_subscription(sub_id, cancel_at_cycle_end=True)
+    if not ok:
+        raise HTTPException(502, detail={"error": "razorpay_error"})
+
+    # Access lapses at the current period end (the next renewal we last recorded).
+    merchant.subscription_cancel_at = merchant.subscription_current_end
+    await session.commit()
+    return CancelOut(
+        cancel_at=merchant.subscription_cancel_at.isoformat() if merchant.subscription_cancel_at else None,
+    )
+
+
 # ── Add-ons ──────────────────────────────────────────────────────────────────
 
 @router.post("/addon", response_model=AddonOut, status_code=status.HTTP_201_CREATED)
@@ -274,6 +305,22 @@ async def remove_addon(
     await session.delete(row)
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/addons", response_model=list[AddonOut])
+async def list_addons(
+    merchant: Merchant = Depends(get_current_merchant),
+    session: AsyncSession = Depends(get_db),
+) -> list[AddonOut]:
+    rows = list((
+        await session.execute(
+            select(MerchantAddon).where(MerchantAddon.merchant_id == merchant.id)
+        )
+    ).scalars().all())
+    return [
+        AddonOut(id=r.id, addon_type=r.addon_type, razorpay_subscription_id=r.razorpay_subscription_id)
+        for r in rows
+    ]
 
 
 # ── Webhook (no auth — verified by HMAC signature) ───────────────────────────
