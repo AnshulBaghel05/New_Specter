@@ -403,6 +403,25 @@ class TestCancel:
         assert resp.status_code == 400
         assert resp.json()["detail"]["error"] == "no_active_subscription"
 
+    def test_cancel_is_idempotent_if_already_scheduled(self, client):
+        """A second cancel when one is already scheduled returns the existing
+        date without calling Razorpay again."""
+        from datetime import datetime, timezone
+        merchant = make_merchant(plan="cipher")
+        merchant.razorpay_subscription_id = "sub_LIVE"
+        merchant.subscription_cancel_at = datetime(2026, 7, 10, tzinfo=timezone.utc)
+        session = AsyncMock()
+        session.commit = AsyncMock()
+        app.dependency_overrides[get_current_merchant] = override_merchant(merchant)
+        app.dependency_overrides[get_db] = override_db(session)
+
+        with patch("services.billing.cancel_subscription", new=AsyncMock(return_value=True)) as cancel:
+            resp = client.post("/billing/cancel")
+
+        assert resp.status_code == 200
+        assert resp.json()["cancel_at"] == "2026-07-10T00:00:00+00:00"
+        cancel.assert_not_awaited()
+
 
 # ════════════════════════════════════════════════════════════════════════════
 # 6. LIST ADD-ONS

@@ -223,6 +223,10 @@ async def cancel(
     if not sub_id:
         raise HTTPException(400, detail={"error": "no_active_subscription"})
 
+    # Idempotent: if a cancellation is already scheduled, don't re-hit Razorpay.
+    if merchant.subscription_cancel_at is not None:
+        return CancelOut(cancel_at=merchant.subscription_cancel_at.isoformat())
+
     ok = await billing.cancel_subscription(sub_id, cancel_at_cycle_end=True)
     if not ok:
         raise HTTPException(502, detail={"error": "razorpay_error"})
