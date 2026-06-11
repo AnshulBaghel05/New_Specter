@@ -349,6 +349,22 @@ async def _resolve_merchant(session: AsyncSession, entity: dict) -> Optional[Mer
     return merchant
 
 
+async def _apply_cancellation(session: AsyncSession, entity: dict) -> None:
+    """Apply a subscription.cancelled to a base-plan subscription: drop the
+    merchant to free at period end (reusing the downgrade transition) and clear
+    the subscription fields. Add-on cancellations are ignored here."""
+    if billing.plan_from_plan_id(entity.get("plan_id")) is None:
+        return  # add-on or unknown plan id — not a base-plan cancellation
+    merchant = await _resolve_merchant(session, entity)
+    if merchant is None or merchant.plan == "free":
+        return
+    await apply_downgrade(session, merchant, "free")
+    merchant.razorpay_subscription_id = None
+    merchant.subscription_current_end = None
+    merchant.subscription_cancel_at = None
+    await session.commit()
+
+
 async def _apply_activation(session: AsyncSession, entity: dict) -> None:
     """Apply a subscription.activated / subscription.charged to merchants.plan."""
     plan_id = entity.get("plan_id")
@@ -387,5 +403,8 @@ async def webhook(request: Request, session: AsyncSession = Depends(get_db)) -> 
     if etype in ("subscription.activated", "subscription.charged"):
         entity = (event.get("payload", {}).get("subscription", {}) or {}).get("entity", {}) or {}
         await _apply_activation(session, entity)
+    elif etype == "subscription.cancelled":
+        entity = (event.get("payload", {}).get("subscription", {}) or {}).get("entity", {}) or {}
+        await _apply_cancellation(session, entity)
 
     return {"status": "ok", "event": etype}

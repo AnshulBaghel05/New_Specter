@@ -194,6 +194,68 @@ class TestWebhookEndpoint:
         assert merchant.plan == "recon"          # unchanged
         session.commit.assert_not_awaited()
 
+    def test_cancelled_drops_plan_to_free(self, client):
+        """subscription.cancelled for a base plan → merchant falls to free."""
+        merchant = make_merchant(plan="cipher")
+        merchant.razorpay_subscription_id = "sub_LIVE"
+        # apply_downgrade does 3 executes: select SKUs, select add-ons, delete add-ons.
+        empty = MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[]))))
+        session = AsyncMock()
+        session.get = AsyncMock(return_value=merchant)
+        session.execute = AsyncMock(side_effect=[empty, empty, MagicMock()])
+        session.commit = AsyncMock()
+
+        body = {
+            "event": "subscription.cancelled",
+            "payload": {"subscription": {"entity": {
+                "id": "sub_LIVE",
+                "plan_id": "plan_cipher_monthly",
+                "notes": {"merchant_id": str(merchant.id)},
+            }}},
+        }
+        resp = self._post(client, body, session=session)
+
+        assert resp.status_code == 200
+        assert merchant.plan == "free"
+        assert merchant.razorpay_subscription_id is None
+        assert merchant.subscription_cancel_at is None
+        assert merchant.subscription_current_end is None
+
+    def test_cancelled_for_addon_plan_id_is_ignored(self, client):
+        """An add-on subscription.cancelled must NOT change the base plan."""
+        merchant = make_merchant(plan="cipher")
+        session = AsyncMock()
+        session.get = AsyncMock(return_value=merchant)
+        session.commit = AsyncMock()
+        body = {
+            "event": "subscription.cancelled",
+            "payload": {"subscription": {"entity": {
+                "id": "sub_addon", "plan_id": "plan_addon_50",
+                "notes": {"merchant_id": str(merchant.id)},
+            }}},
+        }
+        resp = self._post(client, body, session=session)
+        assert resp.status_code == 200
+        assert merchant.plan == "cipher"  # unchanged
+
+    def test_activation_stamps_current_end(self, client):
+        merchant = make_merchant(plan="free")
+        session = AsyncMock()
+        session.get = AsyncMock(return_value=merchant)
+        session.commit = AsyncMock()
+        body = {
+            "event": "subscription.activated",
+            "payload": {"subscription": {"entity": {
+                "id": "sub_A", "plan_id": "plan_recon_monthly",
+                "current_end": 1783036800,  # 2026-07-13T00:00:00Z
+                "notes": {"merchant_id": str(merchant.id)},
+            }}},
+        }
+        resp = self._post(client, body, session=session)
+        assert resp.status_code == 200
+        assert merchant.subscription_current_end is not None
+        assert merchant.subscription_current_end.year == 2026
+
 
 # ════════════════════════════════════════════════════════════════════════════
 # 2b. SUBSCRIBE / UPGRADE
