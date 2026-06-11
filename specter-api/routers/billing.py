@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -34,6 +35,17 @@ from services import billing
 from services.retention import schedule_downgrade_deletion
 
 router = APIRouter(prefix="/billing", tags=["billing"])
+
+
+def _unix_to_dt(value: object) -> Optional[datetime]:
+    """Razorpay sends period timestamps as Unix epoch seconds. Parse to an
+    aware datetime; return None for missing/garbage values."""
+    if value in (None, "", 0):
+        return None
+    try:
+        return datetime.fromtimestamp(int(value), tz=timezone.utc)
+    except (ValueError, TypeError, OSError):
+        return None
 
 
 # ── Schemas ──────────────────────────────────────────────────────────────────
@@ -122,21 +134,17 @@ async def upgrade(
 
 # ── Downgrade (immediate) ────────────────────────────────────────────────────
 
-@router.post("/downgrade")
-async def downgrade(
-    body: DowngradeIn,
-    merchant: Merchant = Depends(get_current_merchant),
-    session: AsyncSession = Depends(get_db),
-) -> dict:
-    target = body.plan.lower()
-    if _plan_index(target) < 0:
-        raise HTTPException(400, detail={"error": "invalid_plan", "plan": target})
-    if _plan_index(target) >= _plan_index(merchant.plan):
-        raise HTTPException(400, detail={"error": "not_a_downgrade",
-                                         "current_plan": merchant.plan, "target_plan": target})
+async def apply_downgrade(session: AsyncSession, merchant: Merchant, target: str) -> dict:
+    """Apply a plan-lowering transition (used by POST /downgrade AND the
+    subscription.cancelled webhook → free). Pauses SKUs above the target
+    ceiling, cancels + drops every add-on, applies the plan + competitor limit,
+    and schedules grace deletion when 90-day retention is lost. Commits.
 
+    `target` must already be validated as a real, strictly-lower plan by the
+    caller; this helper does no ordering checks.
+    """
     # 1. Pause SKUs above the new plan's ceiling (active=false, never deleted).
-    new_limit = plan_max_skus(target)  # int or None (ECLIPSE only — not a downgrade target)
+    new_limit = plan_max_skus(target)  # int or None (ECLIPSE only — not a target here)
     paused = 0
     if new_limit is not None:
         stmt = (
@@ -149,7 +157,7 @@ async def downgrade(
             sku.active = False
             paused += 1
 
-    # 2. Cancel + delete every add-on immediately (PRICING.md — add-ons don't carry over).
+    # 2. Cancel + delete every add-on immediately (add-ons don't carry over).
     addon_stmt = select(MerchantAddon).where(MerchantAddon.merchant_id == merchant.id)
     addons = list((await session.execute(addon_stmt)).scalars().all())
     for addon in addons:
@@ -166,10 +174,9 @@ async def downgrade(
     merchant.max_competitors_per_sku = plan_competitor_limit(target)
     await session.commit()
 
-    # 4. PREDATOR/ECLIPSE losing 90-day retention: schedule a 7-day grace deletion
-    #    of this merchant's >30-day history (F9 downgrade edge case). Runs AFTER the
-    #    plan change is committed so this merchant no longer counts as a 90-day
-    #    tracker — otherwise its own URLs would be excluded and nothing scheduled.
+    # 4. Losing 90-day retention: schedule a 7-day grace deletion of >30-day
+    #    history. Runs AFTER commit so this merchant no longer counts as a
+    #    90-day tracker (otherwise its own URLs would be excluded).
     scheduled = 0
     if was_90d and not now_90d:
         scheduled = await schedule_downgrade_deletion(session, merchant.id)
@@ -180,6 +187,21 @@ async def downgrade(
         "addons_removed": len(addons),
         "snapshots_scheduled_for_deletion": scheduled,
     }
+
+
+@router.post("/downgrade")
+async def downgrade(
+    body: DowngradeIn,
+    merchant: Merchant = Depends(get_current_merchant),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    target = body.plan.lower()
+    if _plan_index(target) < 0:
+        raise HTTPException(400, detail={"error": "invalid_plan", "plan": target})
+    if _plan_index(target) >= _plan_index(merchant.plan):
+        raise HTTPException(400, detail={"error": "not_a_downgrade",
+                                         "current_plan": merchant.plan, "target_plan": target})
+    return await apply_downgrade(session, merchant, target)
 
 
 # ── Add-ons ──────────────────────────────────────────────────────────────────
@@ -256,14 +278,9 @@ async def remove_addon(
 
 # ── Webhook (no auth — verified by HMAC signature) ───────────────────────────
 
-async def _apply_activation(session: AsyncSession, entity: dict) -> None:
-    """Apply a subscription.activated / subscription.charged to merchants.plan."""
-    plan_id = entity.get("plan_id")
-    target_plan = billing.plan_from_plan_id(plan_id)
-    if target_plan is None:
-        # Add-on subscription or unknown plan id — no base-plan change.
-        return
-
+async def _resolve_merchant(session: AsyncSession, entity: dict) -> Optional[Merchant]:
+    """Map a Razorpay subscription entity back to a Merchant via notes.merchant_id
+    (preferred) or razorpay_subscription_id (fallback)."""
     sub_id = entity.get("id")
     notes = entity.get("notes") or {}
     merchant_id = notes.get("merchant_id")
@@ -278,14 +295,28 @@ async def _apply_activation(session: AsyncSession, entity: dict) -> None:
         merchant = (
             await session.execute(select(Merchant).where(Merchant.razorpay_subscription_id == sub_id))
         ).scalar_one_or_none()
+    return merchant
+
+
+async def _apply_activation(session: AsyncSession, entity: dict) -> None:
+    """Apply a subscription.activated / subscription.charged to merchants.plan."""
+    plan_id = entity.get("plan_id")
+    target_plan = billing.plan_from_plan_id(plan_id)
+    if target_plan is None:
+        # Add-on subscription or unknown plan id — no base-plan change.
+        return
+
+    merchant = await _resolve_merchant(session, entity)
     if merchant is None:
         return
 
     merchant.plan = target_plan
-    merchant.razorpay_subscription_id = sub_id
+    merchant.razorpay_subscription_id = entity.get("id")
     merchant.trial_ends_at = None
     merchant.read_only = False
     merchant.max_competitors_per_sku = plan_competitor_limit(target_plan)
+    merchant.subscription_current_end = _unix_to_dt(entity.get("current_end"))
+    merchant.subscription_cancel_at = None  # a fresh charge clears any pending cancel
     await session.commit()
 
 
