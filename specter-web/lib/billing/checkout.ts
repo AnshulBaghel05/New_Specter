@@ -50,7 +50,8 @@ export interface OpenCheckoutArgs {
 /**
  * Open the best available checkout for a created subscription. Returns the mode
  * actually used. Both embedded success and hosted redirect land on
- * /dashboard/billing/success (embedded via callback_url; hosted is the page).
+ * /billing/success (embedded via callback_url; hosted is the page). The
+ * (dashboard) route group adds no URL prefix, so the path has no /dashboard.
  */
 export async function openCheckout(args: OpenCheckoutArgs): Promise<CheckoutMode> {
   const scriptLoaded = RAZORPAY_KEY_ID ? await loadCheckoutScript() : false
@@ -65,7 +66,7 @@ export async function openCheckout(args: OpenCheckoutArgs): Promise<CheckoutMode
     const rzp = new w.Razorpay({
       key: RAZORPAY_KEY_ID,
       subscription_id: args.subscriptionId,
-      callback_url: `${window.location.origin}/dashboard/billing/success`,
+      callback_url: `${window.location.origin}/billing/success`,
       redirect: true,
       modal: { ondismiss: args.onDismiss },
     })

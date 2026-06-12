@@ -47,7 +47,7 @@ export async function middleware(request: NextRequest) {
   // of redirecting to sign-in.
   const PROTECTED = [
     '/dashboard', '/workspace', '/signals', '/competitors', '/products',
-    '/alerts', '/repricing', '/attribution', '/settings',
+    '/alerts', '/repricing', '/attribution', '/settings', '/billing',
   ]
   const isProtected = PROTECTED.some(
     (p) => pathname === p || pathname.startsWith(`${p}/`),
