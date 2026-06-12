@@ -2,6 +2,7 @@
 
 import { useMerchant, useProducts } from '@/lib/api'
 import PlanCard from '@/components/dashboard/settings/plan-card'
+import BillingCard from '@/components/dashboard/settings/billing-card'
 import UsageCard from '@/components/dashboard/settings/usage-card'
 import ShopifyCard from '@/components/dashboard/settings/shopify-card'
 import NotificationsCard from '@/components/dashboard/settings/notifications-card'
@@ -39,6 +40,7 @@ export default function SettingsPage() {
             skuLimit={products.data?.sku_limit ?? null}
             maxCompetitors={merchant.max_competitors_per_sku}
           />
+          {['recon', 'cipher', 'phantom'].includes(merchant.plan) && <BillingCard merchant={merchant} />}
           <UsageCard
             plan={merchant.plan}
             used={products.data?.sku_used ?? 0}
