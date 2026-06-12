@@ -48,7 +48,29 @@ export interface Merchant {
   max_competitors_per_sku: number | null
   auto_reprice_enabled: boolean
   email_notifications_enabled: boolean
+  subscription_current_end: string | null
+  subscription_cancel_at: string | null
 }
+
+export interface Addon {
+  id: string
+  addon_type: string
+  razorpay_subscription_id: string | null
+}
+
+export interface SubscriptionResponse {
+  subscription_id: string
+  status: string | null
+  short_url: string | null
+}
+
+export interface CancelResponse {
+  cancel_at: string | null
+  status: string
+}
+
+export type SelfServePlan = 'recon' | 'cipher' | 'phantom'
+export type BillingCadence = 'monthly' | 'annual'
 
 export interface SKU {
   id: string
@@ -233,6 +255,7 @@ export const queryKeys = {
   priceChanges: ['repricing', 'changes'] as const,
   attribution: (days: number) => ['attribution', days] as const,
   products: ['products'] as const,
+  addons: ['billing', 'addons'] as const,
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -284,6 +307,88 @@ export function useDisconnectShopify(): UseMutationResult<void, ApiError, void> 
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.merchant })
     },
+  })
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// BILLING HOOKS
+// ════════════════════════════════════════════════════════════════════════════
+
+export function useStartTrial(): UseMutationResult<Merchant, ApiError, void> {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () =>
+      PREVIEW
+        ? Promise.resolve<Merchant>({ ...previewMerchant, plan: 'recon' })
+        : apiFetch<Merchant>('/merchants/start-trial', { method: 'POST' }),
+    onSuccess: (data) => qc.setQueryData(queryKeys.merchant, data),
+  })
+}
+
+export function useSubscribe(): UseMutationResult<
+  SubscriptionResponse,
+  ApiError,
+  { plan: SelfServePlan; cadence: BillingCadence }
+> {
+  return useMutation({
+    mutationFn: (body) =>
+      PREVIEW
+        ? Promise.resolve<SubscriptionResponse>({ subscription_id: 'sub_preview', status: 'created', short_url: null })
+        : apiFetch<SubscriptionResponse>('/billing/subscribe', { method: 'POST', body: JSON.stringify(body) }),
+  })
+}
+
+export function useUpgrade(): UseMutationResult<
+  SubscriptionResponse,
+  ApiError,
+  { plan: SelfServePlan; cadence: BillingCadence }
+> {
+  return useMutation({
+    mutationFn: (body) =>
+      PREVIEW
+        ? Promise.resolve<SubscriptionResponse>({ subscription_id: 'sub_preview', status: 'created', short_url: null })
+        : apiFetch<SubscriptionResponse>('/billing/upgrade', { method: 'POST', body: JSON.stringify(body) }),
+  })
+}
+
+export function useDowngrade(): UseMutationResult<unknown, ApiError, { plan: string }> {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body) =>
+      PREVIEW
+        ? Promise.resolve({ plan: body.plan })
+        : apiFetch<unknown>('/billing/downgrade', { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.merchant }),
+  })
+}
+
+export function useCancelSubscription(): UseMutationResult<CancelResponse, ApiError, void> {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () =>
+      PREVIEW
+        ? Promise.resolve<CancelResponse>({ cancel_at: null, status: 'cancel_scheduled' })
+        : apiFetch<CancelResponse>('/billing/cancel', { method: 'POST' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.merchant }),
+  })
+}
+
+export function useAddons(): UseQueryResult<Addon[], ApiError> {
+  return useQuery({
+    queryKey: queryKeys.addons,
+    queryFn: () => (PREVIEW ? Promise.resolve<Addon[]>([]) : apiFetch<Addon[]>('/billing/addons')),
+    retry: false,
+  })
+}
+
+export function useRemoveAddon(): UseMutationResult<void, ApiError, string> {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (addonId) =>
+      PREVIEW
+        ? Promise.resolve(undefined as void)
+        : apiFetch<void>(`/billing/addon/${addonId}`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.addons }),
   })
 }
 
