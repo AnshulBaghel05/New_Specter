@@ -72,6 +72,19 @@ export default function BillingCard({ merchant }: { merchant: Merchant }) {
     }
   }
 
+  async function doRemoveAddon(addonId: string) {
+    try {
+      await removeAddon.mutateAsync(addonId)
+      toast.success('Add-on removed.')
+    } catch (err) {
+      toast.error(formatApiError(err))
+    }
+  }
+
+  // Disable the money-path controls while any subscription mutation is in flight
+  // so a double-click can't create two subscriptions or fire duplicate requests.
+  const changing = upgrade.isPending || downgrade.isPending
+
   return (
     <SettingsCard title="Billing">
       <div className="flex flex-col gap-4">
@@ -95,7 +108,8 @@ export default function BillingCard({ merchant }: { merchant: Merchant }) {
               key={p}
               type="button"
               onClick={() => changePlan(p)}
-              className="border border-border text-muted hover:text-text hover:border-primary/40 text-xs font-semibold px-3 py-1.5 rounded-lg transition-all"
+              disabled={changing}
+              className="border border-border text-muted hover:text-text hover:border-primary/40 text-xs font-semibold px-3 py-1.5 rounded-lg transition-all disabled:opacity-50 disabled:pointer-events-none"
             >
               {ORDER.indexOf(p) > idx ? 'Upgrade to' : 'Downgrade to'} {p.toUpperCase()}
             </button>
@@ -111,8 +125,9 @@ export default function BillingCard({ merchant }: { merchant: Merchant }) {
                 <span className="font-mono text-xs text-text">{a.addon_type}</span>
                 <button
                   type="button"
-                  onClick={() => removeAddon.mutate(a.id)}
-                  className="font-body text-xs text-rose-300 hover:underline"
+                  onClick={() => doRemoveAddon(a.id)}
+                  disabled={removeAddon.isPending}
+                  className="font-body text-xs text-rose-300 hover:underline disabled:opacity-50 disabled:pointer-events-none"
                 >
                   Remove
                 </button>
@@ -125,7 +140,7 @@ export default function BillingCard({ merchant }: { merchant: Merchant }) {
         {!cancelAt && merchant.subscription_current_end !== null && (
           confirmCancel ? (
             <div className="flex items-center gap-3">
-              <button type="button" onClick={doCancel} className="font-body text-sm text-rose-300 hover:underline">
+              <button type="button" onClick={doCancel} disabled={cancel.isPending} className="font-body text-sm text-rose-300 hover:underline disabled:opacity-50 disabled:pointer-events-none">
                 Confirm cancellation
               </button>
               <button type="button" onClick={() => setConfirmCancel(false)} className="font-body text-sm text-muted hover:text-text">
