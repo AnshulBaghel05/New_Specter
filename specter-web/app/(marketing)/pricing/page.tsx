@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import Nav from '@/components/marketing/nav'
 import Footer from '@/components/marketing/footer'
 import { useScrollReveal } from '@/hooks/use-scroll-reveal'
@@ -10,6 +11,11 @@ import { cn } from '@/lib/utils'
 import PlanContactModal from '@/components/marketing/plan-contact-modal'
 import { CONTACT_PLANS } from '@/lib/marketing/contact-plans'
 import { priceDisplay, PROMO_BADGE, ANNUAL_DISCOUNT_PCT } from '@/lib/pricing'
+import { createClient } from '@/lib/supabase/client'
+import { saveIntent } from '@/lib/billing/intent'
+import { useStartTrial, useSubscribe, type SelfServePlan } from '@/lib/api'
+import { openCheckout } from '@/lib/billing/checkout'
+import { toast, formatApiError } from '@/lib/toast'
 
 /* ─── Data ─────────────────────────────────────────────────────── */
 
@@ -229,10 +235,14 @@ function TierCard({
   tier,
   annual,
   onContact,
+  onTrial,
+  onBuy,
 }: {
   tier: Tier
   annual: boolean
   onContact: (plan: 'PREDATOR' | 'ECLIPSE') => void
+  onTrial: (plan: SelfServePlan) => void
+  onBuy: (plan: SelfServePlan) => void
 }) {
   const price = priceDisplay(tier.name, tier.monthly, annual)
   const ctaClasses = cn(
@@ -304,15 +314,28 @@ function TierCard({
         ))}
       </ul>
 
-      {/* CTA — contact tiers open the lead-capture modal; the rest navigate. */}
+      {/* CTA — contact tiers open the lead modal; self-serve get dual actions. */}
       {tier.contact ? (
         <button type="button" onClick={() => onContact(tier.contact!)} className={ctaClasses}>
           {tier.cta}
         </button>
       ) : (
-        <Link href={tier.ctaHref ?? '/sign-up'} className={ctaClasses}>
-          {tier.cta}
-        </Link>
+        <div className="flex flex-col gap-2">
+          <button
+            type="button"
+            onClick={() => onTrial(tier.name.toLowerCase() as SelfServePlan)}
+            className={ctaClasses}
+          >
+            Start 14-day trial
+          </button>
+          <button
+            type="button"
+            onClick={() => onBuy(tier.name.toLowerCase() as SelfServePlan)}
+            className="btn-ripple block w-full text-center py-2.5 rounded-lg text-sm font-semibold border border-primary/40 text-primary hover:bg-primary/10 transition-all duration-250"
+          >
+            Buy {tier.name}
+          </button>
+        </div>
       )}
     </div>
   )
@@ -428,6 +451,45 @@ export default function PricingPage() {
   const cardsRef = useScrollReveal<HTMLDivElement>({ y: 20 })
   const faqRef = useScrollReveal<HTMLDivElement>({ stagger: 0.05, childSelector: '.faq-item' })
 
+  const router = useRouter()
+  const startTrial = useStartTrial()
+  const subscribe = useSubscribe()
+
+  async function isLoggedIn(): Promise<boolean> {
+    const { data } = await createClient().auth.getSession()
+    return !!data.session
+  }
+
+  async function handleTrial(plan: SelfServePlan) {
+    if (!(await isLoggedIn())) {
+      saveIntent({ action: 'trial', plan, cadence: annual ? 'annual' : 'monthly' })
+      router.push('/sign-up')
+      return
+    }
+    try {
+      await startTrial.mutateAsync()
+      toast.success('Your 14-day RECON trial is active.')
+      router.push('/dashboard')
+    } catch (err) {
+      toast.error(formatApiError(err))
+    }
+  }
+
+  async function handleBuy(plan: SelfServePlan) {
+    const cadence = annual ? 'annual' : 'monthly'
+    if (!(await isLoggedIn())) {
+      saveIntent({ action: 'buy', plan, cadence })
+      router.push('/sign-up')
+      return
+    }
+    try {
+      const sub = await subscribe.mutateAsync({ plan, cadence })
+      await openCheckout({ subscriptionId: sub.subscription_id, shortUrl: sub.short_url })
+    } catch (err) {
+      toast.error(formatApiError(err))
+    }
+  }
+
   return (
     <>
       <Nav />
@@ -483,7 +545,14 @@ export default function PricingPage() {
           <div className="max-w-7xl mx-auto">
             <div ref={cardsRef} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 items-end">
               {TIERS.map((tier) => (
-                <TierCard key={tier.name} tier={tier} annual={annual} onContact={setContactPlan} />
+                <TierCard
+                  key={tier.name}
+                  tier={tier}
+                  annual={annual}
+                  onContact={setContactPlan}
+                  onTrial={handleTrial}
+                  onBuy={handleBuy}
+                />
               ))}
             </div>
 
