@@ -358,11 +358,16 @@ async def _apply_cancellation(session: AsyncSession, entity: dict) -> None:
     merchant = await _resolve_merchant(session, entity)
     if merchant is None or merchant.plan == "free":
         return
-    await apply_downgrade(session, merchant, "free")
+    # Clear the subscription fields BEFORE apply_downgrade so the plan drop and
+    # the field clearing land in a single committed transaction (apply_downgrade
+    # commits internally). A second commit here would split them across two
+    # transactions: a crash in between would leave the merchant on free with a
+    # stale razorpay_subscription_id that webhook redelivery could never clear
+    # (the plan == "free" guard above would short-circuit it forever).
     merchant.razorpay_subscription_id = None
     merchant.subscription_current_end = None
     merchant.subscription_cancel_at = None
-    await session.commit()
+    await apply_downgrade(session, merchant, "free")
 
 
 async def _apply_activation(session: AsyncSession, entity: dict) -> None:

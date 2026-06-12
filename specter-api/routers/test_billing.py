@@ -238,6 +238,26 @@ class TestWebhookEndpoint:
         assert resp.status_code == 200
         assert merchant.plan == "cipher"  # unchanged
 
+    def test_cancelled_for_already_free_merchant_is_noop(self, client):
+        """Redelivered subscription.cancelled on a free merchant changes nothing
+        and never touches apply_downgrade (no session.execute)."""
+        merchant = make_merchant(plan="free")
+        session = AsyncMock()
+        session.get = AsyncMock(return_value=merchant)
+        session.execute = AsyncMock()
+        session.commit = AsyncMock()
+        body = {
+            "event": "subscription.cancelled",
+            "payload": {"subscription": {"entity": {
+                "id": "sub_LIVE", "plan_id": "plan_cipher_monthly",
+                "notes": {"merchant_id": str(merchant.id)},
+            }}},
+        }
+        resp = self._post(client, body, session=session)
+        assert resp.status_code == 200
+        assert merchant.plan == "free"
+        session.execute.assert_not_called()
+
     def test_activation_stamps_current_end(self, client):
         merchant = make_merchant(plan="free")
         session = AsyncMock()
