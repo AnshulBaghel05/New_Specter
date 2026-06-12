@@ -19,7 +19,8 @@ def test_merchant_tablename_and_columns():
             "trial_ends_at", "read_only", "shopify_reconnect_required",
             "eclipse_interval_ms", "max_competitors_per_sku",
             "auto_reprice_enabled", "email_notifications_enabled",
-            "notification_email"} == cols
+            "notification_email", "subscription_current_end",
+            "subscription_cancel_at"} == cols
 
 
 def test_sku_tablename_and_columns():
