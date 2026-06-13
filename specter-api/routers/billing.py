@@ -109,8 +109,20 @@ async def _start_subscription(
     if not sub or not sub.get("id"):
         raise HTTPException(502, detail={"error": "razorpay_error"})
 
+    # Supersede any prior subscription (e.g. an upgrade recon→cipher creates a
+    # new Razorpay subscription) so the customer isn't billed for both. We point
+    # the merchant at the new sub FIRST, then cancel the old one: the old sub's
+    # eventual subscription.cancelled webhook no longer matches the merchant's
+    # current razorpay_subscription_id, so _apply_cancellation ignores it and the
+    # merchant is NOT dropped to free.
+    previous_sub_id = merchant.razorpay_subscription_id
     merchant.razorpay_subscription_id = sub["id"]
+    merchant.subscription_cancel_at = None  # re-subscribing clears any pending cancel
     await session.commit()
+
+    if previous_sub_id and previous_sub_id != sub["id"]:
+        await billing.cancel_subscription(previous_sub_id)
+
     return SubscriptionOut(subscription_id=sub["id"], status=sub.get("status"), short_url=sub.get("short_url"))
 
 
@@ -357,6 +369,15 @@ async def _apply_cancellation(session: AsyncSession, entity: dict) -> None:
         return  # add-on or unknown plan id — not a base-plan cancellation
     merchant = await _resolve_merchant(session, entity)
     if merchant is None or merchant.plan == "free":
+        return
+    # Ignore cancellations of a SUPERSEDED subscription. After an upgrade the old
+    # plan's subscription is cancelled at Razorpay; its subscription.cancelled
+    # event resolves to this same merchant (shared notes.merchant_id) but must NOT
+    # drop the merchant who just moved to a higher plan. Only the merchant's
+    # CURRENT subscription dropping is a real cancellation. (When id is absent we
+    # fall through to the original behaviour.)
+    sub_id = entity.get("id")
+    if sub_id and sub_id != merchant.razorpay_subscription_id:
         return
     # Clear the subscription fields BEFORE apply_downgrade so the plan drop and
     # the field clearing land in a single committed transaction (apply_downgrade

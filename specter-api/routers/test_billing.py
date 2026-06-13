@@ -258,6 +258,29 @@ class TestWebhookEndpoint:
         assert merchant.plan == "free"
         session.execute.assert_not_called()
 
+    def test_cancelled_for_superseded_subscription_is_ignored(self, client):
+        """After an upgrade, the OLD plan's subscription.cancelled must NOT drop a
+        merchant who now sits on a newer subscription. Resolves to the same
+        merchant (shared notes) but the id no longer matches the current sub."""
+        merchant = make_merchant(plan="cipher")
+        merchant.razorpay_subscription_id = "sub_NEW"
+        session = AsyncMock()
+        session.get = AsyncMock(return_value=merchant)
+        session.execute = AsyncMock()
+        session.commit = AsyncMock()
+        body = {
+            "event": "subscription.cancelled",
+            "payload": {"subscription": {"entity": {
+                "id": "sub_OLD", "plan_id": "plan_recon_monthly",
+                "notes": {"merchant_id": str(merchant.id)},
+            }}},
+        }
+        resp = self._post(client, body, session=session)
+        assert resp.status_code == 200
+        assert merchant.plan == "cipher"  # unchanged
+        assert merchant.razorpay_subscription_id == "sub_NEW"  # untouched
+        session.execute.assert_not_called()
+
     def test_activation_stamps_current_end(self, client):
         merchant = make_merchant(plan="free")
         session = AsyncMock()
@@ -320,6 +343,26 @@ class TestSubscribe:
         resp = client.post("/billing/upgrade", json={"plan": "recon"})
         assert resp.status_code == 400
         assert resp.json()["detail"]["error"] == "not_an_upgrade"
+
+    def test_upgrade_cancels_previous_subscription(self, client):
+        """recon→cipher creates a new sub AND cancels the old one so the customer
+        isn't double-billed; the merchant points at the new sub."""
+        merchant = make_merchant(plan="recon")
+        merchant.razorpay_subscription_id = "sub_OLD"
+        session = AsyncMock()
+        session.commit = AsyncMock()
+        app.dependency_overrides[get_current_merchant] = override_merchant(merchant)
+        app.dependency_overrides[get_db] = override_db(session)
+
+        with patch("services.billing.create_subscription",
+                   new=AsyncMock(return_value={"id": "sub_NEW", "status": "created", "short_url": "https://rzp/y"})), \
+             patch("services.billing.cancel_subscription", new=AsyncMock(return_value=True)) as cancel:
+            resp = client.post("/billing/upgrade", json={"plan": "cipher"})
+
+        assert resp.status_code == 200
+        assert resp.json()["subscription_id"] == "sub_NEW"
+        assert merchant.razorpay_subscription_id == "sub_NEW"
+        cancel.assert_awaited_once_with("sub_OLD")
 
 
 # ════════════════════════════════════════════════════════════════════════════
