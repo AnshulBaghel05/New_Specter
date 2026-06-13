@@ -38,6 +38,7 @@ redis==7.4.0
 rich==15.0.0
 rich-toolkit==0.19.10
 rsa==4.9.1
+sentry-sdk==2.20.0
 shellingham==1.5.4
 six==1.17.0
 SQLAlchemy==2.0.49

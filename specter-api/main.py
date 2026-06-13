@@ -1,7 +1,12 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from routers import merchants, skus, competitors, signals, alerts, repricing, attribution, products, calculations, billing, internal, cost, cron
+from observability import init_sentry
+from routers import merchants, skus, competitors, signals, alerts, repricing, attribution, products, calculations, billing, internal, cost, cron, health
+
+# Initialise error tracking before the app is built so import-time/startup errors
+# are captured. No-ops without sentry-sdk + SENTRY_DSN (see observability.py).
+init_sentry()
 
 app = FastAPI(title="specter-api", version="0.2.0")
 
@@ -26,8 +31,4 @@ app.include_router(billing.router)
 app.include_router(internal.router)
 app.include_router(cost.router)
 app.include_router(cron.router)
-
-
-@app.get("/health")
-async def health():
-    return {"status": "ok"}
+app.include_router(health.router)
