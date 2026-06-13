@@ -51,7 +51,7 @@ export default function BillingCard({ merchant }: { merchant: Merchant }) {
     try {
       if (targetIdx > idx) {
         const sub = await upgrade.mutateAsync({ plan: target, cadence: 'monthly' })
-        await openCheckout({ subscriptionId: sub.subscription_id, shortUrl: sub.short_url })
+        await openCheckout({ subscriptionId: sub.subscription_id, shortUrl: sub.short_url, plan: target })
       } else {
         await downgrade.mutateAsync({ plan: target })
         toast.success(`Downgraded to ${target.toUpperCase()}.`)

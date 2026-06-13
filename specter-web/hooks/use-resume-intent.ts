@@ -40,7 +40,7 @@ export function useResumeIntent(): void {
             plan: intent.plan as SelfServePlan,
             cadence: intent.cadence as BillingCadence,
           })
-          await openCheckout({ subscriptionId: sub.subscription_id, shortUrl: sub.short_url })
+          await openCheckout({ subscriptionId: sub.subscription_id, shortUrl: sub.short_url, plan: intent.plan })
         }
       } catch (err) {
         toast.error(formatApiError(err))

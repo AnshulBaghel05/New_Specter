@@ -41,9 +41,22 @@ export function loadCheckoutScript(): Promise<boolean> {
   })
 }
 
+/**
+ * Build the checkout-return path, tagging the plan the user is buying so the
+ * success page can poll until THAT plan is live (not merely "left free"). This
+ * matters for upgrades/trial→buy where the merchant is already non-free at
+ * return time. Path-only (no origin) so it's pure and unit-testable.
+ */
+export function buildSuccessPath(plan?: string | null): string {
+  const base = '/billing/success'
+  return plan ? `${base}?plan=${encodeURIComponent(plan.toLowerCase())}` : base
+}
+
 export interface OpenCheckoutArgs {
   subscriptionId: string
   shortUrl: string | null
+  /** The plan being purchased — threaded to the success page as ?plan=. */
+  plan?: string | null
   onDismiss?: () => void
 }
 
@@ -66,7 +79,7 @@ export async function openCheckout(args: OpenCheckoutArgs): Promise<CheckoutMode
     const rzp = new w.Razorpay({
       key: RAZORPAY_KEY_ID,
       subscription_id: args.subscriptionId,
-      callback_url: `${window.location.origin}/billing/success`,
+      callback_url: `${window.location.origin}${buildSuccessPath(args.plan)}`,
       redirect: true,
       modal: { ondismiss: args.onDismiss },
     })

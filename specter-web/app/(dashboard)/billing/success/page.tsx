@@ -21,6 +21,16 @@ export default function BillingSuccessPage() {
   const { data: merchant } = useMerchant()
   const [finalizing, setFinalizing] = useState(true)
   const polls = useRef(0)
+  // The plan being purchased, passed via ?plan= (see lib/billing/checkout
+  // buildSuccessPath). On an upgrade or trial→buy the merchant is ALREADY
+  // non-free at return time, so "left free" can't tell us the new plan landed —
+  // we must wait for this specific plan. Absent (e.g. hosted fallback) → fall
+  // back to "left free", which is correct for the primary free→paid flow.
+  const [target, setTarget] = useState<string | null>(null)
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search).get('plan')
+    if (p && p.toLowerCase() !== 'free') setTarget(p.toLowerCase())
+  }, [])
 
   useEffect(() => {
     const id = setInterval(() => {
@@ -35,11 +45,13 @@ export default function BillingSuccessPage() {
   }, [qc])
 
   useEffect(() => {
-    if (merchant && merchant.plan !== 'free') {
+    if (!merchant) return
+    const arrived = target ? merchant.plan === target : merchant.plan !== 'free'
+    if (arrived) {
       toast.success(`You're on ${merchant.plan.toUpperCase()}.`)
       router.replace('/dashboard')
     }
-  }, [merchant, router])
+  }, [merchant, router, target])
 
   return (
     <div className="flex flex-col items-center justify-center gap-4 py-24 text-center">
