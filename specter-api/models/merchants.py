@@ -15,6 +15,12 @@ class Merchant(Base):
     shopify_access_token: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     woo_api_key: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     razorpay_subscription_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    # Next auto-renew timestamp (Razorpay subscription `current_end`), stamped by
+    # the webhook on subscription.activated/charged. Drives "Next renewal: …".
+    subscription_current_end: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # When a cancel-at-period-end was requested: the date access lapses. Set by
+    # POST /billing/cancel; cleared on (re)activation. Drives "Cancels on …".
+    subscription_cancel_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     trial_ends_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     read_only: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     shopify_reconnect_required: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))

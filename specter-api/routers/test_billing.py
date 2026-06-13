@@ -62,6 +62,8 @@ def make_merchant(plan: str = "recon") -> MagicMock:
     m.read_only = False
     m.razorpay_subscription_id = None
     m.max_competitors_per_sku = 3
+    m.subscription_current_end = None
+    m.subscription_cancel_at = None
     return m
 
 
@@ -192,6 +194,111 @@ class TestWebhookEndpoint:
         assert merchant.plan == "recon"          # unchanged
         session.commit.assert_not_awaited()
 
+    def test_cancelled_drops_plan_to_free(self, client):
+        """subscription.cancelled for a base plan → merchant falls to free."""
+        merchant = make_merchant(plan="cipher")
+        merchant.razorpay_subscription_id = "sub_LIVE"
+        # apply_downgrade does 3 executes: select SKUs, select add-ons, delete add-ons.
+        empty = MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[]))))
+        session = AsyncMock()
+        session.get = AsyncMock(return_value=merchant)
+        session.execute = AsyncMock(side_effect=[empty, empty, MagicMock()])
+        session.commit = AsyncMock()
+
+        body = {
+            "event": "subscription.cancelled",
+            "payload": {"subscription": {"entity": {
+                "id": "sub_LIVE",
+                "plan_id": "plan_cipher_monthly",
+                "notes": {"merchant_id": str(merchant.id)},
+            }}},
+        }
+        resp = self._post(client, body, session=session)
+
+        assert resp.status_code == 200
+        assert merchant.plan == "free"
+        assert merchant.razorpay_subscription_id is None
+        assert merchant.subscription_cancel_at is None
+        assert merchant.subscription_current_end is None
+
+    def test_cancelled_for_addon_plan_id_is_ignored(self, client):
+        """An add-on subscription.cancelled must NOT change the base plan."""
+        merchant = make_merchant(plan="cipher")
+        session = AsyncMock()
+        session.get = AsyncMock(return_value=merchant)
+        session.commit = AsyncMock()
+        body = {
+            "event": "subscription.cancelled",
+            "payload": {"subscription": {"entity": {
+                "id": "sub_addon", "plan_id": "plan_addon_50",
+                "notes": {"merchant_id": str(merchant.id)},
+            }}},
+        }
+        resp = self._post(client, body, session=session)
+        assert resp.status_code == 200
+        assert merchant.plan == "cipher"  # unchanged
+
+    def test_cancelled_for_already_free_merchant_is_noop(self, client):
+        """Redelivered subscription.cancelled on a free merchant changes nothing
+        and never touches apply_downgrade (no session.execute)."""
+        merchant = make_merchant(plan="free")
+        session = AsyncMock()
+        session.get = AsyncMock(return_value=merchant)
+        session.execute = AsyncMock()
+        session.commit = AsyncMock()
+        body = {
+            "event": "subscription.cancelled",
+            "payload": {"subscription": {"entity": {
+                "id": "sub_LIVE", "plan_id": "plan_cipher_monthly",
+                "notes": {"merchant_id": str(merchant.id)},
+            }}},
+        }
+        resp = self._post(client, body, session=session)
+        assert resp.status_code == 200
+        assert merchant.plan == "free"
+        session.execute.assert_not_called()
+
+    def test_cancelled_for_superseded_subscription_is_ignored(self, client):
+        """After an upgrade, the OLD plan's subscription.cancelled must NOT drop a
+        merchant who now sits on a newer subscription. Resolves to the same
+        merchant (shared notes) but the id no longer matches the current sub."""
+        merchant = make_merchant(plan="cipher")
+        merchant.razorpay_subscription_id = "sub_NEW"
+        session = AsyncMock()
+        session.get = AsyncMock(return_value=merchant)
+        session.execute = AsyncMock()
+        session.commit = AsyncMock()
+        body = {
+            "event": "subscription.cancelled",
+            "payload": {"subscription": {"entity": {
+                "id": "sub_OLD", "plan_id": "plan_recon_monthly",
+                "notes": {"merchant_id": str(merchant.id)},
+            }}},
+        }
+        resp = self._post(client, body, session=session)
+        assert resp.status_code == 200
+        assert merchant.plan == "cipher"  # unchanged
+        assert merchant.razorpay_subscription_id == "sub_NEW"  # untouched
+        session.execute.assert_not_called()
+
+    def test_activation_stamps_current_end(self, client):
+        merchant = make_merchant(plan="free")
+        session = AsyncMock()
+        session.get = AsyncMock(return_value=merchant)
+        session.commit = AsyncMock()
+        body = {
+            "event": "subscription.activated",
+            "payload": {"subscription": {"entity": {
+                "id": "sub_A", "plan_id": "plan_recon_monthly",
+                "current_end": 1783036800,  # 2026-07-13T00:00:00Z
+                "notes": {"merchant_id": str(merchant.id)},
+            }}},
+        }
+        resp = self._post(client, body, session=session)
+        assert resp.status_code == 200
+        assert merchant.subscription_current_end is not None
+        assert merchant.subscription_current_end.year == 2026
+
 
 # ════════════════════════════════════════════════════════════════════════════
 # 2b. SUBSCRIBE / UPGRADE
@@ -236,6 +343,26 @@ class TestSubscribe:
         resp = client.post("/billing/upgrade", json={"plan": "recon"})
         assert resp.status_code == 400
         assert resp.json()["detail"]["error"] == "not_an_upgrade"
+
+    def test_upgrade_cancels_previous_subscription(self, client):
+        """recon→cipher creates a new sub AND cancels the old one so the customer
+        isn't double-billed; the merchant points at the new sub."""
+        merchant = make_merchant(plan="recon")
+        merchant.razorpay_subscription_id = "sub_OLD"
+        session = AsyncMock()
+        session.commit = AsyncMock()
+        app.dependency_overrides[get_current_merchant] = override_merchant(merchant)
+        app.dependency_overrides[get_db] = override_db(session)
+
+        with patch("services.billing.create_subscription",
+                   new=AsyncMock(return_value={"id": "sub_NEW", "status": "created", "short_url": "https://rzp/y"})), \
+             patch("services.billing.cancel_subscription", new=AsyncMock(return_value=True)) as cancel:
+            resp = client.post("/billing/upgrade", json={"plan": "cipher"})
+
+        assert resp.status_code == 200
+        assert resp.json()["subscription_id"] == "sub_NEW"
+        assert merchant.razorpay_subscription_id == "sub_NEW"
+        cancel.assert_awaited_once_with("sub_OLD")
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -363,3 +490,85 @@ class TestAddons:
         assert body["addon_type"] == "sku_100"
         assert body["razorpay_subscription_id"] == "sub_new_addon"
         session.commit.assert_awaited()
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 5. CANCEL AT PERIOD END
+# ════════════════════════════════════════════════════════════════════════════
+
+class TestCancel:
+    def test_cancel_marks_period_end_and_calls_razorpay(self, client):
+        """POST /billing/cancel → Razorpay cancel(cancel_at_cycle_end=True),
+        stamps subscription_cancel_at from the known renewal date."""
+        from datetime import datetime, timezone
+        merchant = make_merchant(plan="cipher")
+        merchant.razorpay_subscription_id = "sub_LIVE"
+        merchant.subscription_current_end = datetime(2026, 7, 10, tzinfo=timezone.utc)
+        session = AsyncMock()
+        session.commit = AsyncMock()
+        app.dependency_overrides[get_current_merchant] = override_merchant(merchant)
+        app.dependency_overrides[get_db] = override_db(session)
+
+        with patch("services.billing.cancel_subscription",
+                   new=AsyncMock(return_value=True)) as cancel:
+            resp = client.post("/billing/cancel")
+
+        assert resp.status_code == 200
+        assert resp.json()["cancel_at"] == "2026-07-10T00:00:00+00:00"
+        assert merchant.subscription_cancel_at == merchant.subscription_current_end
+        cancel.assert_awaited_once_with("sub_LIVE", cancel_at_cycle_end=True)
+        session.commit.assert_awaited()
+
+    def test_cancel_without_subscription_returns_400(self, client):
+        merchant = make_merchant(plan="free")
+        merchant.razorpay_subscription_id = None
+        app.dependency_overrides[get_current_merchant] = override_merchant(merchant)
+        app.dependency_overrides[get_db] = override_db(AsyncMock())
+        resp = client.post("/billing/cancel")
+        assert resp.status_code == 400
+        assert resp.json()["detail"]["error"] == "no_active_subscription"
+
+    def test_cancel_is_idempotent_if_already_scheduled(self, client):
+        """A second cancel when one is already scheduled returns the existing
+        date without calling Razorpay again."""
+        from datetime import datetime, timezone
+        merchant = make_merchant(plan="cipher")
+        merchant.razorpay_subscription_id = "sub_LIVE"
+        merchant.subscription_cancel_at = datetime(2026, 7, 10, tzinfo=timezone.utc)
+        session = AsyncMock()
+        session.commit = AsyncMock()
+        app.dependency_overrides[get_current_merchant] = override_merchant(merchant)
+        app.dependency_overrides[get_db] = override_db(session)
+
+        with patch("services.billing.cancel_subscription", new=AsyncMock(return_value=True)) as cancel:
+            resp = client.post("/billing/cancel")
+
+        assert resp.status_code == 200
+        assert resp.json()["cancel_at"] == "2026-07-10T00:00:00+00:00"
+        cancel.assert_not_awaited()
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 6. LIST ADD-ONS
+# ════════════════════════════════════════════════════════════════════════════
+
+class TestListAddons:
+    def test_list_returns_merchant_addons(self, client):
+        import uuid as _uuid
+        merchant = make_merchant(plan="cipher")
+        row = MagicMock(spec=MerchantAddon)
+        row.id = _uuid.uuid4()
+        row.addon_type = "sku_50"
+        row.razorpay_subscription_id = "sub_addon_x"
+        result = MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[row]))))
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=result)
+        app.dependency_overrides[get_current_merchant] = override_merchant(merchant)
+        app.dependency_overrides[get_db] = override_db(session)
+
+        resp = client.get("/billing/addons")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert len(body) == 1
+        assert body[0]["addon_type"] == "sku_50"
+        assert body[0]["razorpay_subscription_id"] == "sub_addon_x"

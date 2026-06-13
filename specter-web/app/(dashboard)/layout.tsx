@@ -17,6 +17,7 @@ import {
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useSignalSummary, useMerchant } from '@/lib/api'
+import { useResumeIntent } from '@/hooks/use-resume-intent'
 import { cn } from '@/lib/utils'
 
 const WORKSPACE_NAV = { href: '/workspace', label: 'Workspace', icon: LayoutGrid }
@@ -38,6 +39,7 @@ export default function DashboardLayout({
 }: {
   children: React.ReactNode
 }) {
+  useResumeIntent()
   const pathname = usePathname()
   const router = useRouter()
 

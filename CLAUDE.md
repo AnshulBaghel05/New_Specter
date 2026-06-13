@@ -65,7 +65,10 @@ NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
 NEXT_PUBLIC_API_URL=https://specter-api.railway.app
 NEXT_PUBLIC_POSTHOG_KEY=
+NEXT_PUBLIC_RAZORPAY_KEY_ID=
 ```
+
+Razorpay publishable key (`RAZORPAY_KEY_ID`) for embedded checkout; webhook `subscription.cancelled` must be registered alongside `activated`/`charged`.
 
 specter-api (Railway) auth env: `SUPABASE_JWT_SECRET` (Project Settings → API → JWT secret) — validates the bearer token on every request.
 

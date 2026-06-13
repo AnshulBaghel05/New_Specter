@@ -78,6 +78,9 @@ def make_merchant(
     m.max_competitors_per_sku = 3
     m.auto_reprice_enabled = True
     m.email_notifications_enabled = True
+    m.razorpay_subscription_id = None
+    m.subscription_current_end = None
+    m.subscription_cancel_at = None
     return m
 
 

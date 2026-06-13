@@ -1,11 +1,13 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { X, ArrowRight, Check } from 'lucide-react'
 import { shouldShowPqlModal, markPqlModalSeen } from '@/lib/tools/pql'
 import { trackLockedValueCardViewed, trackLockedValueCardCTA } from '@/lib/analytics'
+import { useStartTrial } from '@/lib/api'
+import { toast, formatApiError } from '@/lib/toast'
 
 const SURFACE = 'pql_modal'
 
@@ -27,6 +29,20 @@ export default function PqlUpgradeModal({
   active: boolean
 }) {
   const [open, setOpen] = useState(false)
+  const router = useRouter()
+  const startTrial = useStartTrial()
+
+  async function activateTrial() {
+    trackLockedValueCardCTA(SURFACE, 'recon')
+    try {
+      await startTrial.mutateAsync()
+      toast.success('Your 14-day RECON trial is active.')
+      close()
+      router.push('/dashboard')
+    } catch (err) {
+      toast.error(formatApiError(err))
+    }
+  }
 
   useEffect(() => {
     if (!active) return
@@ -100,17 +116,15 @@ export default function PqlUpgradeModal({
               </ul>
 
               <div className="flex items-center gap-3 mt-6">
-                <Link
-                  href="/pricing"
-                  onClick={() => {
-                    trackLockedValueCardCTA(SURFACE, 'recon')
-                    close()
-                  }}
-                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl gradient-primary-cta btn-ripple font-semibold text-sm transition-all duration-200"
+                <button
+                  type="button"
+                  onClick={activateTrial}
+                  disabled={startTrial.isPending}
+                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl gradient-primary-cta btn-ripple font-semibold text-sm transition-all duration-200 disabled:opacity-60"
                 >
                   Start a 14-day RECON trial
                   <ArrowRight size={15} aria-hidden="true" />
-                </Link>
+                </button>
                 <button
                   type="button"
                   onClick={close}

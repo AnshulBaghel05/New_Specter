@@ -62,6 +62,8 @@ export const previewMerchant: Merchant = {
   max_competitors_per_sku: MAX_COMPETITORS_PER_SKU,
   auto_reprice_enabled: false,
   email_notifications_enabled: true,
+  subscription_current_end: null,
+  subscription_cancel_at: null,
 }
 
 // ── Products / SKUs / competitors: none yet ──────────────────────────────────

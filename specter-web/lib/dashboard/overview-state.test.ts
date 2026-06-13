@@ -41,6 +41,8 @@ function makeMerchant(overrides: Partial<Merchant> = {}): Merchant {
     max_competitors_per_sku: null,
     auto_reprice_enabled: false,
     email_notifications_enabled: false,
+    subscription_current_end: null,
+    subscription_cancel_at: null,
     ...overrides,
   }
 }

@@ -85,6 +85,8 @@ class MerchantOut(BaseModel):
     max_competitors_per_sku: Optional[int]
     auto_reprice_enabled: bool
     email_notifications_enabled: bool
+    subscription_current_end: Optional[str] = None
+    subscription_cancel_at: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -213,6 +215,8 @@ async def get_me(merchant: Merchant = Depends(get_current_merchant)) -> Merchant
         max_competitors_per_sku=competitor_limit_for(merchant.plan, merchant.max_competitors_per_sku),
         auto_reprice_enabled=merchant.auto_reprice_enabled,
         email_notifications_enabled=merchant.email_notifications_enabled,
+        subscription_current_end=merchant.subscription_current_end.isoformat() if merchant.subscription_current_end else None,
+        subscription_cancel_at=merchant.subscription_cancel_at.isoformat() if merchant.subscription_cancel_at else None,
     )
 
 
