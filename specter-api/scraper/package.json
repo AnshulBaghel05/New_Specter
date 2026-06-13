@@ -6,6 +6,11 @@
   "scripts": {
     "build": "tsc",
     "dev": "ts-node scheduler.ts",
+    "scheduler": "ts-node scheduler.ts",
+    "worker:probe": "ts-node workers/probe.ts",
+    "worker:http": "ts-node workers/http.ts",
+    "worker:playwright": "ts-node workers/playwright.ts",
+    "worker:captcha": "ts-node workers/captcha-solver.ts",
     "bull-board": "ts-node bull-board.ts",
     "lint": "tsc --noEmit",
     "test": "vitest run"
