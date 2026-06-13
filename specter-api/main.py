@@ -1,3 +1,5 @@
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -10,10 +12,24 @@ init_sentry()
 
 app = FastAPI(title="specter-api", version="0.2.0")
 
+# CORS: restrict to the frontend origin(s) in production via ALLOWED_ORIGINS
+# (comma-separated). Defaults to "*" for local dev when unset. Credentials are
+# only enabled when origins are explicitly restricted — the browser rejects
+# `Access-Control-Allow-Origin: *` together with credentials, and the frontend
+# authenticates with a Bearer JWT (not cookies), so "*" needs none.
+def parse_allowed_origins(raw: str | None) -> list[str]:
+    """Parse the ALLOWED_ORIGINS env value into a CORS origins list.
+    Comma-separated origins → that list; empty/unset → ["*"] (open, dev default)."""
+    origins = [o.strip() for o in (raw or "").split(",") if o.strip()]
+    return origins or ["*"]
+
+
+_allow_origins = parse_allowed_origins(os.environ.get("ALLOWED_ORIGINS"))
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   # locked down per-env via ALLOWED_ORIGINS
-    allow_credentials=True,
+    allow_origins=_allow_origins,
+    allow_credentials=_allow_origins != ["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
