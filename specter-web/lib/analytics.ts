@@ -91,6 +91,39 @@ export function initPostHog() {
   _initialised = true
 }
 
+// ── Identity ─────────────────────────────────────────────────────────────────
+
+/** Associate subsequent events with a signed-in user (called on Supabase auth). */
+export function identifyUser(userId: string, email?: string | null): void {
+  if (typeof window === 'undefined') return
+  try {
+    posthog.identify(userId, email ? { email } : undefined)
+  } catch {
+    // never throw from analytics
+  }
+}
+
+/** Register merchant_id (and plan) as super-properties so EVERY captured event
+ *  carries them. Called from the dashboard once the merchant is known. */
+export function identifyMerchant(merchantId: string, plan?: string): void {
+  if (typeof window === 'undefined') return
+  try {
+    posthog.register(plan ? { merchant_id: merchantId, plan } : { merchant_id: merchantId })
+  } catch {
+    // never throw from analytics
+  }
+}
+
+/** Clear identity + super-properties on sign-out so the next user isn't conflated. */
+export function resetIdentity(): void {
+  if (typeof window === 'undefined') return
+  try {
+    posthog.reset()
+  } catch {
+    // never throw from analytics
+  }
+}
+
 // ── Core track function ────────────────────────────────────────────────────
 
 export function track<E extends AnalyticsEvent>(

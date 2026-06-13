@@ -33,6 +33,8 @@ from jose import JWTError, jwt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from observability import set_merchant_scope
+
 from db import get_db
 from models.merchants import Merchant
 
@@ -153,4 +155,7 @@ async def get_current_merchant(
             },
         )
 
+    # Attribute any error raised while handling this request to the merchant
+    # (no-op without Sentry — see observability.py).
+    set_merchant_scope(str(merchant.id))
     return merchant
