@@ -125,6 +125,7 @@ This is the full list of every key/secret across all components. Columns:
 | `RAZORPAY_PLAN_ADDON_SPEED_RECON` / `_SPEED_CIPHER` / `_SPEED_PHANTOM` | " | For à-la-carte add-ons |
 | `SENTRY_DSN` | Sentry → API project → Client Keys (DSN) | Optional (no-op if unset) |
 | `SENTRY_ENVIRONMENT` / `SENTRY_TRACES_SAMPLE_RATE` | your choice (defaults: `RAILWAY_ENVIRONMENT` / `0.0`) | Optional |
+| `ALLOWED_ORIGINS` | Comma-separated frontend origins, e.g. `https://<web>.vercel.app`. Restricts CORS + enables credentials; defaults to `*` if unset | Recommended in prod |
 | `ECLIPSE_WORKER_URL` | Enterprise dedicated worker base URL | Optional (ECLIPSE only) |
 | `RAILWAY_ENVIRONMENT` | **Auto-injected by Railway** — do not set | n/a |
 
@@ -332,10 +333,8 @@ and **rotate it** before this deployment serves real traffic:
 | Frontend shows demo data only | `NEXT_PUBLIC_PREVIEW=1` left on | Unset it / set `0`, redeploy |
 | Bull Board returns 500 | `BULL_BOARD_USER`/`PASS` unset (fails closed) | Set both |
 
-### Known hardening item — CORS
+### CORS
 
-`specter-api/main.py` currently sets `allow_origins=["*"]`. It functions (the
-frontend authenticates with a Bearer JWT, not cookies), but for production you
-should restrict origins to your Vercel domain. The inline comment references an
-`ALLOWED_ORIGINS` env var that is **not yet wired** — lock this down in a
-follow-up change before exposing the API broadly.
+`specter-api/main.py` reads `ALLOWED_ORIGINS` (comma-separated). Set it to your
+Vercel domain(s) in production to restrict CORS; leave it unset only for local
+dev (defaults to `*`). When restricted, credentials are enabled automatically.

@@ -58,7 +58,7 @@ export default function EmailCaptureGate({
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current)
     }
-  }, [isResultReady, dismissed])
+  }, [isResultReady, dismissed, toolId])
 
   function handleDismiss() {
     setVisible(false)

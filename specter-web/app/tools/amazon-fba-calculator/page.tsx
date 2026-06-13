@@ -171,7 +171,7 @@ export default function FbaCalculatorPage() {
       category,
       input_usd.selling_price,
     ),
-    [input_usd, r.fulfillment_fee],
+    [input_usd, r.fulfillment_fee, category],
   )
 
   const exportInputs: ExportRow[] = useMemo(() => [
@@ -196,7 +196,7 @@ export default function FbaCalculatorPage() {
     { label: 'Storage Fee',      value: fmt(fromUSD(r.monthly_storage_fee)) },
     { label: 'Break-even Price', value: fmt(fromUSD(r.break_even_price)) },
     { label: 'Size Tier',        value: TIER_LABELS[r.size_tier] },
-  ], [fmt, fromUSD, r])
+  ], [fmt, fromUSD, r, breakeven_acos])
 
   const currentInputs: Record<string, string | boolean> = useMemo(() => ({
     selling_price, product_cost, weight_oz, length_in, width_in,
