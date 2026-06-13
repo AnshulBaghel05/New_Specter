@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from routers import merchants, skus, competitors, signals, alerts, repricing, attribution, products, calculations, billing, internal, cost
+from routers import merchants, skus, competitors, signals, alerts, repricing, attribution, products, calculations, billing, internal, cost, cron
 
 app = FastAPI(title="specter-api", version="0.2.0")
 
@@ -25,6 +25,7 @@ app.include_router(calculations.router)
 app.include_router(billing.router)
 app.include_router(internal.router)
 app.include_router(cost.router)
+app.include_router(cron.router)
 
 
 @app.get("/health")
