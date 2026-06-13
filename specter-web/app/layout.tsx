@@ -1,7 +1,6 @@
 import type { Metadata } from 'next'
 import { Syne, DM_Sans, JetBrains_Mono } from 'next/font/google'
-import SmoothScrollProvider from '@/components/providers/smooth-scroll'
-import QueryProvider from '@/components/providers/query-provider'
+import Providers from './providers'
 import './globals.css'
 
 const syne = Syne({
@@ -82,9 +81,7 @@ export default function RootLayout({
       } as React.CSSProperties}
     >
       <body className="font-body bg-bg text-text antialiased">
-        <QueryProvider>
-          <SmoothScrollProvider>{children}</SmoothScrollProvider>
-        </QueryProvider>
+        <Providers>{children}</Providers>
       </body>
     </html>
   )

@@ -1,6 +1,6 @@
 'use client'
 
-import { Suspense } from 'react'
+import { Suspense, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import {
@@ -18,6 +18,7 @@ import {
 import { createClient } from '@/lib/supabase/client'
 import { useSignalSummary, useMerchant } from '@/lib/api'
 import { useResumeIntent } from '@/hooks/use-resume-intent'
+import { identifyMerchant } from '@/lib/analytics'
 import { cn } from '@/lib/utils'
 
 const WORKSPACE_NAV = { href: '/workspace', label: 'Workspace', icon: LayoutGrid }
@@ -51,6 +52,12 @@ export default function DashboardLayout({
   // users live in the live platform, so it leads. Every item stays visible —
   // platform tabs render their preview/demo state for free, never a blank wall.
   const { data: merchant } = useMerchant()
+
+  // Attach merchant_id (+ plan) to every PostHog event once the merchant loads.
+  useEffect(() => {
+    if (merchant?.id) identifyMerchant(merchant.id, merchant.plan)
+  }, [merchant?.id, merchant?.plan])
+
   const isFree = merchant?.plan === 'free' || merchant === undefined
   const NAV = isFree
     ? [WORKSPACE_NAV, ...PLATFORM_NAV, SETTINGS_NAV]
