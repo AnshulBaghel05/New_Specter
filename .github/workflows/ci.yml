@@ -60,6 +60,10 @@ jobs:
   scraper:
     name: specter-scraper · vitest
     runs-on: ubuntu-latest
+    # The redis module resolves a connection URL at import time; ioredis connects
+    # lazily so a dummy URL is enough for the (offline) unit tests.
+    env:
+      UPSTASH_REDIS_URL: redis://localhost:6379
     defaults:
       run:
         working-directory: specter-api/scraper
