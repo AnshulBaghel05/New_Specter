@@ -168,16 +168,13 @@ export default function SignInPage() {
                 >
                   Password
                 </label>
-                <span className="font-body text-xs text-muted">
-                  Forgot?{' '}
-                  <Link
-                    href="/sign-up"
-                    className="text-primary hover:underline"
-                    tabIndex={-1}
-                  >
-                    Create new account
-                  </Link>
-                </span>
+                <Link
+                  href="/forgot-password"
+                  className="font-body text-xs text-primary hover:underline"
+                  tabIndex={-1}
+                >
+                  Forgot password?
+                </Link>
               </div>
               <div className="relative">
                 <input
