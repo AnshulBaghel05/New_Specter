@@ -3,7 +3,12 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+
 from observability import init_sentry
+from rate_limit import limiter
 from routers import merchants, skus, competitors, signals, alerts, repricing, attribution, products, calculations, billing, internal, cost, cron, health
 
 # Initialise error tracking before the app is built so import-time/startup errors
@@ -33,6 +38,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Rate limiting (slowapi). A generous default ceiling guards every route; routers
+# tighten sensitive endpoints (e.g. competitors POST, billing webhook) with their
+# own @limiter.limit decorators. No-op when RATE_LIMIT_ENABLED is false.
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
 
 app.include_router(merchants.router)
 app.include_router(skus.router)

@@ -28,6 +28,11 @@ def _margins_dep():
     return cost_margin.merchant_margins
 
 
+def _per_sku_dep():
+    """Patchable seam for the cost-per-SKU aggregation."""
+    return cost_margin.merchant_cost_per_sku
+
+
 @router.get("/margin")
 async def get_margin(
     date_from: date = Query(..., alias="from"),
@@ -46,5 +51,23 @@ async def get_margin(
         "to": date_to.isoformat(),
         "count": len(rows),
         "totals": totals,
+        "merchants": rows,
+    }
+
+
+@router.get("/per-sku")
+async def get_cost_per_sku(
+    date_from: date = Query(..., alias="from"),
+    date_to: date = Query(..., alias="to"),
+    db: AsyncSession = Depends(get_db),
+    per_sku=Depends(_per_sku_dep),
+) -> dict:
+    """Per-merchant cost-to-serve per active SKU — surfaces unprofitable customers
+    by unit cost. Worst (highest cost/SKU) first."""
+    rows = await per_sku(db, date_from, date_to)
+    return {
+        "from": date_from.isoformat(),
+        "to": date_to.isoformat(),
+        "count": len(rows),
         "merchants": rows,
     }

@@ -31,6 +31,7 @@ from db import get_db
 from models.merchant_addons import MerchantAddon
 from models.merchants import Merchant
 from models.skus import SKU
+from rate_limit import limiter
 from services import billing
 from services.retention import schedule_downgrade_deletion
 
@@ -362,9 +363,9 @@ async def _resolve_merchant(session: AsyncSession, entity: dict) -> Optional[Mer
 
 
 async def _apply_cancellation(session: AsyncSession, entity: dict) -> None:
-    """Apply a subscription.cancelled to a base-plan subscription: drop the
-    merchant to free at period end (reusing the downgrade transition) and clear
-    the subscription fields. Add-on cancellations are ignored here."""
+    """Apply a subscription.cancelled OR subscription.halted to a base-plan
+    subscription: drop the merchant to free (reusing the downgrade transition) and
+    clear the subscription fields. Add-on cancellations are ignored here."""
     if billing.plan_from_plan_id(entity.get("plan_id")) is None:
         return  # add-on or unknown plan id — not a base-plan cancellation
     merchant = await _resolve_merchant(session, entity)
@@ -414,6 +415,7 @@ async def _apply_activation(session: AsyncSession, entity: dict) -> None:
 
 
 @router.post("/webhook")
+@limiter.limit("120/minute")
 async def webhook(request: Request, session: AsyncSession = Depends(get_db)) -> dict:
     raw = await request.body()
     signature = request.headers.get("X-Razorpay-Signature", "")
@@ -429,8 +431,15 @@ async def webhook(request: Request, session: AsyncSession = Depends(get_db)) -> 
     if etype in ("subscription.activated", "subscription.charged"):
         entity = (event.get("payload", {}).get("subscription", {}) or {}).get("entity", {}) or {}
         await _apply_activation(session, entity)
-    elif etype == "subscription.cancelled":
+    elif etype in ("subscription.cancelled", "subscription.halted"):
+        # cancelled = user cancel; halted = Razorpay exhausted payment retries
+        # (dunning failure). Both revoke access via the same transition to free.
         entity = (event.get("payload", {}).get("subscription", {}) or {}).get("entity", {}) or {}
         await _apply_cancellation(session, entity)
+    elif etype == "subscription.pending":
+        # Payment failed; Razorpay is retrying (dunning in progress). Keep access
+        # during the retry window — it is only revoked on halt/cancel. No-op so an
+        # active paying customer mid-retry is never wrongly downgraded.
+        pass
 
     return {"status": "ok", "event": etype}

@@ -1,0 +1,4 @@
+# Test/dev-only dependencies (kept out of the runtime requirements.txt).
+# Async tests run on the anyio pytest plugin, and anyio is already a runtime dep.
+-r requirements.txt
+pytest==9.0.3

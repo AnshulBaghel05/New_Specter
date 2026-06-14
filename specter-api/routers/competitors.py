@@ -34,6 +34,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from auth.plan_gate import competitor_limit_for, plan_max_skus
 from auth.supabase import get_current_merchant
 from db import get_db
+from rate_limit import rate_limit_dependency
+from services.url_safety import is_safe_competitor_url
 from models.competitor_trackings import CompetitorTracking
 from models.competitor_urls import CompetitorURL
 from models.merchants import Merchant
@@ -142,7 +144,13 @@ async def list_competitors(
     return [await _build_tracking_out(t, session) for t in trackings]
 
 
-@router.post("", response_model=TrackingOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=TrackingOut,
+    status_code=status.HTTP_201_CREATED,
+    # Anti-spam on the cost-incurring endpoint (each add enqueues a scrape).
+    dependencies=[Depends(rate_limit_dependency("20/minute", "competitors_post"))],
+)
 async def add_competitor(
     body: CompetitorAdd,
     merchant: Merchant = Depends(get_current_merchant),
@@ -160,6 +168,16 @@ async def add_competitor(
       6. Upsert competitor_url, create competitor_tracking.
       7. Queue probe job immediately (F2 AC#4).
     """
+    # 0. SSRF guard — reject URLs that target internal/private infrastructure
+    #    (cloud metadata, localhost, private/link-local ranges) before the
+    #    scraper ever fetches them.
+    safe, reason = is_safe_competitor_url(body.url)
+    if not safe:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": "unsafe_url", "reason": reason},
+        )
+
     # 1. Validate own product ownership
     sku = await session.get(SKU, body.own_product_id)
     if sku is None or sku.merchant_id != merchant.id:
