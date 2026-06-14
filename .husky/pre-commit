@@ -1,0 +1,19 @@
+#!/usr/bin/env sh
+# SPECTER pre-commit hook — blocks any commit that fails the specter-web gate.
+#
+# Runs `npm run lint` then `npm test` in specter-web. `set -e` aborts the commit
+# with a non-zero exit the moment either step fails.
+#
+# Activate (one-time, per clone):  git config core.hooksPath .husky
+set -e
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT/specter-web"
+
+echo "[pre-commit] specter-web → ESLint…"
+npm run lint
+
+echo "[pre-commit] specter-web → unit tests…"
+npm test
+
+echo "[pre-commit] passed ✓"

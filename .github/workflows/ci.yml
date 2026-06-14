@@ -1,0 +1,76 @@
+name: CI
+
+# Validate every pull request before it can merge to main.
+# Three independent jobs (web / api / scraper) run in parallel; a failure in
+# ANY of lint, type-check, pytest, or vitest fails the run and turns the PR's
+# status check red. Configure a branch-protection rule on `main` requiring all
+# three checks so a red CI blocks merge.
+on:
+  pull_request:
+    branches: [main]
+
+# Cancel superseded runs on the same PR to save CI minutes.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    name: specter-web · lint + tsc + vitest
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: specter-web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: specter-web/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: ESLint
+        run: npm run lint
+      - name: Type-check
+        run: npx tsc --noEmit
+      - name: Unit tests
+        run: npm test
+
+  api:
+    name: specter-api · pytest
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: specter-api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: specter-api/requirements.txt
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Pytest
+        # conftest.py supplies safe test defaults (e.g. UPSTASH_REDIS_URL); the
+        # suite runs without live infrastructure.
+        run: python -m pytest -q
+
+  scraper:
+    name: specter-scraper · vitest
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: specter-api/scraper
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: specter-api/scraper/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Unit tests
+        run: npm test
