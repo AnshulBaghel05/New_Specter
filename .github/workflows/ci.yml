@@ -25,7 +25,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: specter-web/package-lock.json
       - name: Install dependencies
@@ -49,9 +49,9 @@ jobs:
         with:
           python-version: '3.13'
           cache: pip
-          cache-dependency-path: specter-api/requirements.txt
+          cache-dependency-path: specter-api/requirements-dev.txt
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements-dev.txt
       - name: Pytest
         # conftest.py supplies safe test defaults (e.g. UPSTASH_REDIS_URL); the
         # suite runs without live infrastructure.
@@ -67,7 +67,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: specter-api/scraper/package-lock.json
       - name: Install dependencies
