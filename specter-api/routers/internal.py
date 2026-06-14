@@ -13,6 +13,7 @@ cannot stall a merchant's signals.
 """
 from __future__ import annotations
 
+import os
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -60,7 +61,10 @@ class MerchantCycle(BaseModel):
 class SnapshotIn(BaseModel):
     domain: str
     url_path: str
-    price: Decimal
+    # Data-quality guard: a valid price is strictly positive and fits the
+    # Numeric(10,2) column. Parse failures post to /scrape-failed instead, so a
+    # price-snapshot should never carry 0/negative — reject (422) if it does.
+    price: Decimal = Field(gt=0, le=Decimal("99999999.99"))
     in_stock: bool
     currency: str = "USD"
     title: Optional[str] = None
@@ -136,6 +140,34 @@ async def _resolve_competitor_url_id(session: AsyncSession, domain: str, url_pat
     session.add(cu)
     await session.flush()
     return cu.id
+
+
+def _skip_unchanged() -> bool:
+    """Skip-write optimization toggle (off by default to preserve exact behavior).
+
+    When on, a snapshot whose (price, in_stock) equals the last stored value for
+    its URL is NOT re-inserted (storage/write saving) — but the cycle still
+    advances and the fetch cost is still recorded, so signals never stall and cost
+    accounting stays accurate. Roll out via env after validating in staging."""
+    return os.environ.get("SNAPSHOT_SKIP_UNCHANGED", "false").lower() in ("1", "true", "yes")
+
+
+async def _last_values(
+    session: AsyncSession, cu_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, tuple[Decimal, bool]]:
+    """Latest (price, in_stock) per competitor_url_id. Uses DISTINCT ON over the
+    (competitor_url_id, scraped_at DESC) index added in migration 0013."""
+    ids = list({c for c in cu_ids})
+    if not ids:
+        return {}
+    stmt = (
+        select(PriceSnapshot.competitor_url_id, PriceSnapshot.price, PriceSnapshot.in_stock)
+        .where(PriceSnapshot.competitor_url_id.in_(ids))
+        .order_by(PriceSnapshot.competitor_url_id, PriceSnapshot.scraped_at.desc())
+        .distinct(PriceSnapshot.competitor_url_id)
+    )
+    rows = (await session.execute(stmt)).all()
+    return {r[0]: (r[1], r[2]) for r in rows}
 
 
 def _snapshot_row(competitor_url_id: uuid.UUID, item: SnapshotIn, now: datetime) -> dict:
@@ -242,6 +274,22 @@ async def _ingest(session: AsyncSession, redis_client: Redis, items: list[Snapsh
         )
         prepared.append((item, cu_id))
 
+    # Skip-write (opt-in): drop items whose (price, in_stock) is unchanged from the
+    # last stored value — no row insert, but they still advance the cycle and incur
+    # cost below (the fetch happened). Off by default → `unchanged` stays empty and
+    # behavior is identical.
+    unchanged: list[tuple[SnapshotIn, uuid.UUID]] = []
+    if _skip_unchanged() and prepared:
+        last = await _last_values(session, [cu for _, cu in prepared])
+        kept: list[tuple[SnapshotIn, uuid.UUID]] = []
+        for item, cu_id in prepared:
+            prev = last.get(cu_id)
+            if prev is not None and prev[0] == item.price and prev[1] == item.in_stock:
+                unchanged.append((item, cu_id))
+            else:
+                kept.append((item, cu_id))
+        prepared = kept
+
     # Split: job_uuid-bearing items take the single bulk INSERT; the rare UUID-less
     # item falls back to a per-row insert (it has no idempotency key to dedupe on).
     with_uuid: list[tuple[SnapshotIn, uuid.UUID]] = []
@@ -273,6 +321,20 @@ async def _ingest(session: AsyncSession, redis_client: Redis, items: list[Snapsh
         await _write_audit(session, item.domain, "stored",
                            item.robots_decision, item.proxy_tier)
         # One fetch's cost, split across the merchants sharing this crawl (Audit #4).
+        await record_scrape_cost(
+            session, redis_client,
+            [mc.merchant_id for mc in item.merchant_cycle_ids],
+            item.proxy_tier, item.resp_bytes, item.captcha_solved,
+            domain=item.domain,
+        )
+
+    # Unchanged (skip-write) items: no row + no OOS/signal dispatch, but the fetch
+    # still happened — advance the cycle and record its cost so signals don't stall
+    # and cost accounting stays correct.
+    for item, _cu_id in unchanged:
+        _record_cycles(store, fired, item.merchant_cycle_ids)
+        await _write_audit(session, item.domain, "unchanged",
+                           item.robots_decision, item.proxy_tier)
         await record_scrape_cost(
             session, redis_client,
             [mc.merchant_id for mc in item.merchant_cycle_ids],

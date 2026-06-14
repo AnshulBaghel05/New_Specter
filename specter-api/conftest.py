@@ -16,6 +16,10 @@ import os
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://user:pass@localhost:5432/test")
 os.environ.setdefault("UPSTASH_REDIS_URL", "rediss://:password@localhost:6379")
 
+# Rate limiting off by default for the suite so high-volume tests don't trip it;
+# the dedicated rate-limit test enables a limiter explicitly.
+os.environ.setdefault("RATE_LIMIT_ENABLED", "false")
+
 # Auth / crypto.
 os.environ.setdefault("SUPABASE_JWT_SECRET", "test-supabase-jwt-secret-32-char!")
 os.environ.setdefault("ENCRYPTION_KEY", base64.urlsafe_b64encode(b"t" * 32).decode())
