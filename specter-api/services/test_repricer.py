@@ -73,6 +73,24 @@ class TestComputeReprice:
         assert d.clamped == "floor"
         assert "floor-clamped" in d.reason
 
+    def test_raise_clamped_to_floor_defends_against_wrong_direction(self):
+        # A misdirected RAISE whose undercut lands BELOW the floor must still be
+        # floor-clamped — previously RAISE ignored the floor and would sell below it.
+        d = compute_reprice("RAISE", D(130), floor_price=D(120), ceiling_price=None,
+                            instock_competitor_prices=[D(100), D(110)])
+        assert d is not None
+        assert d.new_price == D("120.00")        # 99.99 → clamped up to floor 120
+        assert d.clamped == "floor"
+
+    def test_lower_clamped_to_ceiling_defends_against_wrong_direction(self):
+        # A misdirected LOWER whose median lands ABOVE the ceiling must still be
+        # ceiling-clamped — previously LOWER ignored the ceiling.
+        d = compute_reprice("LOWER", D(200), floor_price=None, ceiling_price=D(70),
+                            instock_competitor_prices=[D(100), D(100)])
+        assert d is not None
+        assert d.new_price == D("70.00")         # 99.99 → clamped down to ceiling 70
+        assert d.clamped == "ceiling"
+
     def test_hold_returns_none(self):
         assert compute_reprice("HOLD", D(100), None, None, [D(120)]) is None
 
