@@ -31,6 +31,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from observability import set_merchant_scope
@@ -133,7 +134,11 @@ async def get_current_merchant(
     merchant: Optional[Merchant] = result.scalar_one_or_none()
 
     if merchant is None:
-        # First sign-in — auto-create a FREE merchant stub (freemium floor).
+        # First sign-in — auto-create a FREE merchant stub (freemium floor) and
+        # COMMIT it so the identity persists from first contact. A flush alone is
+        # rolled back on any read-only request (e.g. GET /merchants/me, which never
+        # commits), so a browsing free user was previously re-created with a fresh
+        # id every request and stayed invisible to trial/retention background jobs.
         # Trial (recon + trial_ends_at) is an explicit opt-in, not the default.
         merchant = Merchant(
             supabase_user_id=supabase_user_id,
@@ -141,10 +146,23 @@ async def get_current_merchant(
             notification_email=email,
         )
         session.add(merchant)
-        await session.flush()  # assigns merchant.id without committing
+        try:
+            await session.commit()
+        except IntegrityError:
+            # A concurrent first request (e.g. two tabs on first login) already
+            # inserted this user — supabase_user_id is UNIQUE, so reuse that row.
+            await session.rollback()
+            merchant = (
+                await session.execute(
+                    select(Merchant).where(Merchant.supabase_user_id == supabase_user_id)
+                )
+            ).scalar_one()
+        else:
+            await session.refresh(merchant)  # load server defaults (read_only, etc.)
     elif email and merchant.notification_email != email:
         # Keep the stored recipient in sync if the user changed their email.
         merchant.notification_email = email
+        await session.commit()
 
     if merchant.read_only:
         raise HTTPException(

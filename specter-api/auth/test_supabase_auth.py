@@ -5,11 +5,15 @@ os.environ["SUPABASE_JWT_SECRET"] = "test-supabase-jwt-secret-32-char!"
 
 import asyncio
 import time
+import uuid
+from unittest.mock import AsyncMock, MagicMock
 
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives import serialization
+from fastapi.security import HTTPAuthorizationCredentials
 from jose import jwt
 from jose.backends import ECKey
+from sqlalchemy.exc import IntegrityError
 
 import auth.supabase as supa
 
@@ -70,3 +74,58 @@ def test_hs256_wrong_secret_rejected():
         assert False, "expected 401"
     except Exception as e:
         assert getattr(e, "status_code", None) == 401
+
+
+# ── M1: first sign-in persists the merchant (commit, not just flush) ──────────
+
+def _hs256(sub: str) -> HTTPAuthorizationCredentials:
+    token = jwt.encode(_claims(sub), "test-supabase-jwt-secret-32-char!", algorithm="HS256")
+    return HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+
+
+def test_first_signin_commits_new_merchant():
+    """A brand-new user's merchant stub must be COMMITTED (not just flushed), so a
+    read-only request actually persists the row instead of rolling it back."""
+    no_row = MagicMock()
+    no_row.scalar_one_or_none = MagicMock(return_value=None)
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=no_row)
+    session.add = MagicMock()
+    session.commit = AsyncMock()
+    session.refresh = AsyncMock()
+
+    merchant = asyncio.run(supa.get_current_merchant(credentials=_hs256("new-user"), session=session))
+
+    assert merchant.supabase_user_id == "new-user"
+    assert merchant.plan == "free"
+    session.add.assert_called_once()
+    session.commit.assert_awaited_once()   # the fix: commit, not flush
+    session.refresh.assert_awaited_once()
+
+
+def test_first_signin_race_reuses_existing_row():
+    """Two concurrent first requests: the loser's commit hits the UNIQUE constraint
+    on supabase_user_id; it must roll back and reuse the row that won, not 500."""
+    none_row = MagicMock()
+    none_row.scalar_one_or_none = MagicMock(return_value=None)
+
+    existing = MagicMock(spec=supa.Merchant)
+    existing.id = uuid.uuid4()
+    existing.supabase_user_id = "racer"
+    existing.plan = "free"
+    existing.read_only = False
+    existing.notification_email = None
+    won_row = MagicMock()
+    won_row.scalar_one = MagicMock(return_value=existing)
+
+    session = AsyncMock()
+    session.execute = AsyncMock(side_effect=[none_row, won_row])
+    session.add = MagicMock()
+    session.commit = AsyncMock(side_effect=IntegrityError("insert", {}, Exception("dup")))
+    session.rollback = AsyncMock()
+    session.refresh = AsyncMock()
+
+    merchant = asyncio.run(supa.get_current_merchant(credentials=_hs256("racer"), session=session))
+
+    assert merchant is existing
+    session.rollback.assert_awaited_once()

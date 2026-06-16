@@ -14,6 +14,7 @@ import type { Plan, ScrapeJob } from './types'
 export { PLAN_PRIORITY, PLAN_INTERVALS } from './plans'
 import { PLAN_PRIORITY, PLAN_INTERVALS, computeAdaptiveInterval } from './plans'
 import { getUnchangedStreak } from './state-ttl'
+import { claimDomainLock } from './dispatch-lock'
 
 // ── Queue selection by domain classification ──────────────────────────────────
 
@@ -23,6 +24,25 @@ function selectQueue(classRaw: string | null): typeof probeQueue {
     case 'js_required': return playwrightQueue
     default:            return probeQueue  // null (UNKNOWN) → probe to classify
   }
+}
+
+/**
+ * Add `trackingIds` to an already-in-flight job so one fetch serves every merchant
+ * tracking the URL. (Read-modify-write: a fully concurrent merge can still race —
+ * tracked separately — but the high-cost duplicate-FETCH race is closed by the
+ * atomic lock claim below.)
+ */
+async function mergeTrackingIds(
+  queue: typeof probeQueue,
+  jobId: string,
+  trackingIds: string[],
+): Promise<void> {
+  const existingJob = await queue.getJob(jobId)
+  if (!existingJob) return
+  const merged = [
+    ...new Set([...existingJob.data.competitorTrackingIds, ...trackingIds]),
+  ]
+  await existingJob.updateData({ ...existingJob.data, competitorTrackingIds: merged })
 }
 
 // ── Core dispatch: route + domain batching ────────────────────────────────────
@@ -57,29 +77,44 @@ export async function dispatchScrapeJob(
   const existingJobId = await redis.get(lockKey)
 
   if (existingJobId) {
-    // Lock exists — add competitorTrackingIds to the in-flight job rather than creating
-    // a second outbound request to the same URL.
-    const existingJob = await queue.getJob(existingJobId)
-    if (existingJob) {
-      const merged = [
-        ...new Set([...existingJob.data.competitorTrackingIds, ...job.competitorTrackingIds]),
-      ]
-      await existingJob.updateData({ ...existingJob.data, competitorTrackingIds: merged })
-    }
+    // Lock already held — batch onto the in-flight job rather than creating a
+    // second outbound request to the same URL.
+    await mergeTrackingIds(queue, existingJobId, job.competitorTrackingIds)
     return { jobId: existingJobId, batched: true }
   }
 
-  // ── 3. No lock — create new job and set lock ─────────────────────────────────
-  const newJob = await queue.add(`${job.domain}:${job.urlPath}`, job, { priority })
+  // ── 3. No lock — create the job, then CLAIM the lock ATOMICALLY ───────────────
   // Lock TTL = the URL's ADAPTIVE interval: a stable URL (high unchanged-streak)
   // backs off toward its plan cap, so re-dispatches inside that window are batched
   // away instead of triggering a fresh fetch. A price/stock change resets the
   // streak elsewhere, snapping the next lock straight back to the plan floor.
   const streak = await getUnchangedStreak(redis, job.domain, job.urlPath)
   const intervalMs = computeAdaptiveInterval(planKey, streak, eclipseIntervalMs)
-  await redis.set(lockKey, newJob.id!, 'PX', intervalMs)
 
-  return { jobId: newJob.id!, batched: false }
+  const newJob = await queue.add(`${job.domain}:${job.urlPath}`, job, { priority })
+
+  // SET NX: only the FIRST concurrent dispatcher for this URL wins the lock. The
+  // previous get-then-set was a TOCTOU race — two dispatchers could both pass the
+  // `existingJobId` check above and both enqueue a fetch, doubling proxy/CAPTCHA
+  // cost and splitting merchants across two jobs.
+  const { won, holder } = await claimDomainLock(redis, lockKey, newJob.id!, intervalMs)
+  if (won) {
+    return { jobId: newJob.id!, batched: false }
+  }
+
+  // Lost the race — discard our duplicate job and batch onto the winner so the URL
+  // is still fetched exactly once for every merchant tracking it.
+  await newJob.remove()
+  if (holder) {
+    await mergeTrackingIds(queue, holder, job.competitorTrackingIds)
+    return { jobId: holder, batched: true }
+  }
+
+  // Pathological: the winner's lock TTL elapsed between claim and read. Re-create so
+  // the URL is still scraped rather than silently dropped.
+  const retryJob = await queue.add(`${job.domain}:${job.urlPath}`, job, { priority })
+  await redis.set(lockKey, retryJob.id!, 'PX', intervalMs)
+  return { jobId: retryJob.id!, batched: false }
 }
 
 // ── Repeat job scheduling ─────────────────────────────────────────────────────
