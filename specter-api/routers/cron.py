@@ -24,6 +24,7 @@ from auth.cron_auth import require_cron_auth
 from db import get_db
 from redis_client import get_redis
 from services.cost_ledger import flush_daily
+from services.proxy_guard import run_proxy_guard
 from services.retention import purge_expired_snapshots
 from services.trial_monitor import run_trial_monitor
 
@@ -66,3 +67,14 @@ async def trigger_cost_flush(
     target = day or (datetime.now(timezone.utc).date() - timedelta(days=1)).strftime("%Y-%m-%d")
     written = await flush_daily(session, redis, target)
     return {"status": "ok", "day": target, "rows_upserted": written}
+
+
+@router.post("/run-proxy-guard")
+async def trigger_proxy_guard(redis: Redis = Depends(get_redis)) -> dict:
+    """Hourly tick: compare today's global residential vs datacenter proxy spend
+    and, on a budget breach (RESIDENTIAL_MAX_SHARE / RESIDENTIAL_MAX_USD_PER_DAY),
+    alert ops once for the day. Best-effort — never raises, and the once-per-day
+    dedup means an overlapping/repeated run won't spam ops. Run more often than the
+    daily jobs (e.g. hourly) so a residential storm is caught the hour it starts."""
+    result = await run_proxy_guard(redis, datetime.now(timezone.utc))
+    return {"status": "ok", **result}
