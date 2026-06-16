@@ -7,7 +7,9 @@ import type { ScrapeJob, CaptchaSolveJob } from './types'
 // and must not auto-remove failed jobs so ops can inspect them.
 const defaultJobOptions = {
   attempts: 3,
-  backoff: { type: 'exponential', delay: 60_000 },
+  // Custom retry ladder (1m → 5m → 30m) — see backoff.ts; the strategy is
+  // registered on every worker via WORKER_RELIABILITY.settings.backoffStrategy.
+  backoff: { type: 'custom' },
   removeOnComplete: 100,
   removeOnFail: 500,
 }

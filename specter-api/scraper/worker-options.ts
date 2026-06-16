@@ -1,3 +1,5 @@
+import { retryBackoffDelay } from './backoff'
+
 /**
  * Shared BullMQ worker reliability options.
  *
@@ -11,9 +13,14 @@
  *   - stalledInterval— how often the worker scans for stalled jobs.
  *   - maxStalledCount— how many times a job may be reclaimed before it is failed
  *                      (and dead-lettered) instead of looping forever.
+ *   - settings.backoffStrategy — the custom retry ladder (1m → 5m → 30m). Queue
+ *                      jobs select it with `backoff: { type: 'custom' }`. MUST be
+ *                      registered on every worker that processes a custom-backoff
+ *                      queue, or BullMQ can't compute the retry delay.
  */
 export const WORKER_RELIABILITY = {
   lockDuration: 90_000, // 90s — longer than the slowest (Playwright) fetch
   stalledInterval: 30_000, // scan for stalled jobs every 30s
   maxStalledCount: 2, // reclaim at most twice, then fail → dead-letter
+  settings: { backoffStrategy: retryBackoffDelay },
 } as const
