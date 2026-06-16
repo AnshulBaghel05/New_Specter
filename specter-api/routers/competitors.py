@@ -14,7 +14,8 @@ SKU model:
   (e.g. 100 products x 1 competitor = 100 SKUs; 33 products x 3 competitors = 99 SKUs.)
 
 Plan enforcement (server-side only — frontend shows meters but backend is the gate):
-  1. Total enabled competitor_trackings for merchant < plan_max_skus(plan)        → else 402
+  1. Total enabled competitor_trackings < plan_max_skus(plan), capped by an
+     absolute per-merchant ceiling (applies even to unlimited ECLIPSE)            → else 402
   2. Enabled trackings for own_product < competitor_limit_for(plan, override)      → else 402
      (limit is plan-driven; ECLIPSE uses its custom max_competitors_per_sku column)
 """
@@ -80,6 +81,14 @@ class SilenceOOSPatch(BaseModel):
 # ── Router ────────────────────────────────────────────────────────────────────
 
 router = APIRouter(prefix="/competitors", tags=["competitors"])
+
+# Absolute hard ceiling on enabled trackings per merchant — enforced even for
+# ECLIPSE (whose plan SKU limit is "unlimited"). One tracking = one competitor-URL
+# scrape per cycle, so this caps a single account's per-cycle job contribution and
+# stops one tenant from saturating the shared dispatcher/queue and starving other
+# merchants' freshness. Set far above any realistic catalog; self-serve plans hit
+# their (lower) plan limit first, so this only ever bites an unbounded ECLIPSE.
+ABSOLUTE_MAX_TRACKINGS_PER_MERCHANT = 25_000
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -211,19 +220,25 @@ async def add_competitor(
         {"k": _merchant_lock_key(merchant.id)},
     )
 
-    # 2. Total SKU (tracking) limit
+    # 2. Total SKU (tracking) limit — the plan's ceiling, OR the absolute abuse
+    #    ceiling for unlimited (ECLIPSE) plans. Always bounded, so no single account
+    #    can grow its per-cycle scrape volume without limit and exhaust shared
+    #    capacity. The count now always runs (it was skipped for ECLIPSE before).
     plan_limit = plan_max_skus(merchant.plan)
-    if plan_limit is not None:
-        total_stmt = select(func.count()).where(
-            CompetitorTracking.merchant_id == merchant.id,
-            CompetitorTracking.enabled.is_(True),
+    effective_limit = (
+        ABSOLUTE_MAX_TRACKINGS_PER_MERCHANT if plan_limit is None
+        else min(plan_limit, ABSOLUTE_MAX_TRACKINGS_PER_MERCHANT)
+    )
+    total_stmt = select(func.count()).where(
+        CompetitorTracking.merchant_id == merchant.id,
+        CompetitorTracking.enabled.is_(True),
+    )
+    total_used = (await session.execute(total_stmt)).scalar_one()
+    if total_used >= effective_limit:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail={"error": "sku_limit_reached", "limit": effective_limit, "used": total_used},
         )
-        total_used = (await session.execute(total_stmt)).scalar_one()
-        if total_used >= plan_limit:
-            raise HTTPException(
-                status_code=status.HTTP_402_PAYMENT_REQUIRED,
-                detail={"error": "sku_limit_reached", "limit": plan_limit, "used": total_used},
-            )
 
     # 3. Per-product competitor limit (plan-driven; ECLIPSE uses its custom column)
     per_product_limit = competitor_limit_for(merchant.plan, merchant.max_competitors_per_sku)
