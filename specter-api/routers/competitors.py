@@ -107,17 +107,25 @@ def _parse_url(raw_url: str) -> tuple[str, str]:
 async def _check_url_reachable(url: str) -> bool:
     """
     HEAD request to verify the URL is publicly reachable.
-    Returns False on connection error or non-2xx/3xx response.
-    Robots.txt checks happen during the actual probe job — this is just
-    a basic reachability check.
+    Returns False on connection error or 5xx response.
+
+    SSRF: this runs from the API process with DIRECT network access (the SSRF
+    allowlist in `is_safe_competitor_url` only validated the submitted host). We
+    therefore do NOT follow redirects — a public host could 3xx to an internal
+    target (cloud metadata 169.254.169.254, 127.0.0.1, private ranges) and httpx
+    would fetch it from inside our network. A 3xx response already proves the URL
+    is reachable, which is all this pre-flight check needs; the real scraper fetch
+    follows redirects later, but it goes out through an external proxy (and the
+    scraper re-checks safety), so it cannot reach our internal infrastructure.
     """
     try:
-        async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=8.0, follow_redirects=False) as client:
             resp = await client.head(
                 url,
                 headers={"User-Agent": "Mozilla/5.0 Specter-Verify/1.0"},
             )
-        # Accept 2xx, 3xx, 405 (HEAD not allowed but server responded)
+        # Accept 2xx, 3xx (redirect = reachable, not followed), 405 (HEAD not
+        # allowed but server responded). Only a 5xx or a connection error fails.
         return resp.status_code < 500
     except (httpx.ConnectError, httpx.TimeoutException, httpx.RequestError):
         return False
