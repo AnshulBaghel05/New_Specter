@@ -82,7 +82,30 @@ curl -fsS -X POST "$SPECTER_API_URL/internal/run-cost-flush" \
 # → {"status":"ok","day":"2026-06-14","rows_upserted":N}
 ```
 
-> One Railway cron service can drive all three jobs — add a line per job to its
-> command (or three schedules). They share `TRIAL_MONITOR_SECRET`. The standalone
-> `run_retention_purge.py` / `run_cost_flush.py` scripts remain available for
-> running a job directly on a worker without going through HTTP.
+## Proxy-spend guard (residential margin protection)
+
+**Endpoint:** `POST /internal/run-proxy-guard`
+**Auth:** `Authorization: Bearer ${TRIAL_MONITOR_SECRET}` (same cron secret)
+**Cadence:** **hourly** — far more often than the daily jobs, so a residential
+proxy storm is caught the hour it starts, not the next day.
+
+Compares today's global residential vs datacenter proxy spend and, on a breach of
+`RESIDENTIAL_MAX_SHARE` (default 0.20 — the 80/20 rule) or
+`RESIDENTIAL_MAX_USD_PER_DAY` (default 50.0), emails ops **once per day** (dedup
+flag) via `OPS_ALERT_EMAIL`. Best-effort and idempotent — safe to over-run.
+
+Residential is ~28× datacenter cost, so an undetected shift (a bot-wall wave
+flipping domains to JS-required, or a datacenter-pool failover storm) silently
+destroys margin. This turns that into a same-hour signal.
+
+```bash
+curl -fsS -X POST "$SPECTER_API_URL/internal/run-proxy-guard" \
+  -H "Authorization: Bearer $TRIAL_MONITOR_SECRET"
+# → {"status":"ok","day":"2026-06-16","residential_usd":..,"residential_share":..,"breached":false,"alerted":false}
+```
+
+> One Railway cron service can drive all four jobs — add a line per job to its
+> command (or separate schedules; the proxy guard wants `0 * * * *` hourly, the
+> rest daily). They share `TRIAL_MONITOR_SECRET`. The standalone
+> `run_retention_purge.py` / `run_cost_flush.py` / `run_proxy_guard.py` scripts
+> remain available for running a job directly on a worker without going through HTTP.

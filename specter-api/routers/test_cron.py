@@ -23,6 +23,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from db import get_db
+from redis_client import get_redis
 from main import app
 
 SECRET = "cron_secret_123"
@@ -81,3 +82,27 @@ def test_unset_secret_is_config_error_500(client, monkeypatch):
     resp = client.post("/internal/run-trial-monitor", headers={"Authorization": "Bearer anything"})
     assert resp.status_code == 500
     assert resp.json()["detail"]["error"] == "config_error"
+
+
+def test_proxy_guard_valid_token_runs_and_returns_status(client):
+    from unittest.mock import MagicMock
+    app.dependency_overrides[get_redis] = lambda: MagicMock()
+    fake = AsyncMock(return_value={
+        "day": "2026-06-16", "residential_usd": 30.0, "datacenter_usd": 70.0,
+        "residential_share": 0.30, "breached": True, "reasons": ["share"], "alerted": True,
+    })
+    with patch("routers.cron.run_proxy_guard", new=fake):
+        resp = client.post("/internal/run-proxy-guard", headers={"Authorization": f"Bearer {SECRET}"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ok" and body["breached"] is True and body["alerted"] is True
+    fake.assert_awaited_once()
+
+
+def test_proxy_guard_wrong_token_rejected_401(client):
+    from unittest.mock import MagicMock
+    app.dependency_overrides[get_redis] = lambda: MagicMock()
+    with patch("routers.cron.run_proxy_guard", new=AsyncMock()) as fake:
+        resp = client.post("/internal/run-proxy-guard", headers={"Authorization": "Bearer nope"})
+    assert resp.status_code == 401
+    fake.assert_not_awaited()

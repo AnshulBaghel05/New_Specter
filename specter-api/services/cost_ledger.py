@@ -30,6 +30,29 @@ def _key(m: str, day: str, ctype: str) -> str:
     return f"cost:daily:{m}:{day}:{ctype}"
 
 
+# ── Global per-tier proxy spend (margin guard, see services/proxy_guard.py) ──────
+# Un-split total proxy $ per tier per day, across ALL merchants — the input the
+# residential-spend guardrail reads to alert ops when residential blows past the
+# 80/20 budget. One hot counter per (day, tier); incrbyfloat is atomic + cheap.
+
+def tier_spend_key(day: str, tier: str) -> str:
+    return f"proxyspend:{day}:{tier.lower()}"
+
+
+def _accrue_tier_spend(redis, day: str, tier: str, usd: float) -> None:
+    k = tier_spend_key(day, tier)
+    redis.incrbyfloat(k, usd)
+    redis.expire(k, COUNTER_TTL_S)
+
+
+def read_proxy_tier_spend(redis, day: str) -> dict[str, float]:
+    """Global proxy spend (USD) by tier for `day`. Synchronous (sync redis client)."""
+    return {
+        "residential": float(redis.get(tier_spend_key(day, "residential")) or 0),
+        "datacenter":  float(redis.get(tier_spend_key(day, "datacenter")) or 0),
+    }
+
+
 def _accrue(redis, session, m: str, day: str, ctype: str, cost: float,
             units: float, proxy_tier, domain, rng) -> None:
     k = _key(m, day, ctype)
@@ -53,6 +76,10 @@ def _record_scrape_cost_sync(session: AsyncSession, redis, merchant_ids, proxy_t
             return
         costs = cost_model.scrape_cost_usd(proxy_tier, resp_bytes, captcha_solved)
         day = _day(now)
+        # Record the fetch's FULL (un-split) proxy cost against its tier so the
+        # residential-spend guard can watch the global datacenter/residential mix.
+        if proxy_tier and costs["proxy"] > 0:
+            _accrue_tier_spend(redis, day, proxy_tier, costs["proxy"])
         n = len(distinct)
         for m in distinct:
             for ctype in ("proxy", "captcha"):

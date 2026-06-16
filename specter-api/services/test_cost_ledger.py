@@ -34,6 +34,9 @@ def test_record_scrape_cost_splits_across_distinct_merchants():
     k2 = f"cost:daily:{M2}:2026-06-09:proxy"
     assert round(float(redis.get(k1)), 4) == 4.20
     assert round(float(redis.get(k2)), 4) == 4.20
+    # The GLOBAL per-tier counter holds the FULL (un-split) proxy cost = $8.40,
+    # which the residential-spend guard reads.
+    assert round(float(redis.get("proxyspend:2026-06-09:residential")), 2) == 8.40
 
 
 def test_record_scrape_cost_skips_zero_captcha():

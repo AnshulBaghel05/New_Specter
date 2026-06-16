@@ -132,6 +132,38 @@ async def send_trial_reminder_email(to: str, kind: str) -> bool:
     return await _send(to, subject, _shell(body))
 
 
+# ── Residential proxy-spend guardrail (ops alert — margin protection) ────────
+
+async def send_residential_budget_alert(
+    to: str,
+    *,
+    day: str,
+    residential_usd: float,
+    total_usd: float,
+    share: float,
+    max_share: float,
+    max_usd: float,
+    reasons: tuple[str, ...] = (),
+) -> bool:
+    """Ops alert: residential proxy spend has breached its budget (see
+    services/proxy_guard.py). Internal recipient, so values are plain numbers."""
+    reason_txt = " and ".join(
+        {"share": f"share {share:.0%} &gt; {max_share:.0%} cap",
+         "usd": f"${residential_usd:.2f} &gt; ${max_usd:.2f}/day cap"}.get(r, r)
+        for r in reasons
+    ) or "budget exceeded"
+    subject = f"⚠️ Residential proxy spend over budget on {day} ({share:.0%})"
+    body = f"""\
+  <h2 style="font-size:20px;margin:0 0 12px">Residential proxy spend breached budget</h2>
+  <p style="color:#E8EAF0;line-height:1.6">On <strong>{day}</strong>, residential proxy spend was
+  <strong>${residential_usd:.2f}</strong> ({share:.0%} of ${total_usd:.2f} total proxy spend).
+  Trigger: {reason_txt}.</p>
+  <p style="color:#6B7280;line-height:1.6">Residential is ~28× datacenter cost. A spike usually means a
+  bot-wall wave reclassified many domains to JS-required, or a datacenter proxy-pool failover storm.
+  Check /admin/cost/margin and the proxy health store.</p>"""
+    return await _send(to, subject, _shell(body))
+
+
 # ── Domain blocked (F2 edge case) ────────────────────────────────────────────
 
 async def send_domain_blocked_email(to: str, domain: str, robots_blocked: bool) -> bool:
