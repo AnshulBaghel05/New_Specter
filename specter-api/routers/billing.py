@@ -23,6 +23,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel
 from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth.plan_gate import PLAN_HIERARCHY, plan_competitor_limit, plan_max_skus
@@ -30,6 +31,7 @@ from auth.supabase import get_current_merchant
 from db import get_db
 from models.merchant_addons import MerchantAddon
 from models.merchants import Merchant
+from models.processed_webhook_events import ProcessedWebhookEvent
 from models.skus import SKU
 from rate_limit import limiter
 from services import billing
@@ -414,6 +416,31 @@ async def _apply_activation(session: AsyncSession, entity: dict) -> None:
     await session.commit()
 
 
+async def _webhook_event_seen(session: AsyncSession, event_id: str) -> bool:
+    """True if we've already processed this Razorpay event id."""
+    existing = (
+        await session.execute(
+            select(ProcessedWebhookEvent.id).where(
+                ProcessedWebhookEvent.event_id == event_id
+            )
+        )
+    ).scalar_one_or_none()
+    return existing is not None
+
+
+async def _record_webhook_event(
+    session: AsyncSession, event_id: str, event_type: Optional[str]
+) -> None:
+    """Mark a Razorpay event id as processed. A concurrent duplicate delivery that
+    inserts the same id first collides on the UNIQUE constraint — harmless, so the
+    IntegrityError is swallowed."""
+    session.add(ProcessedWebhookEvent(event_id=event_id, event_type=event_type))
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+
+
 @router.post("/webhook")
 @limiter.limit("120/minute")
 async def webhook(request: Request, session: AsyncSession = Depends(get_db)) -> dict:
@@ -428,6 +455,17 @@ async def webhook(request: Request, session: AsyncSession = Depends(get_db)) -> 
         raise HTTPException(status_code=400, detail={"error": "invalid_payload"})
 
     etype = event.get("event")
+
+    # Idempotency: Razorpay redelivers an event (stable X-Razorpay-Event-Id) until
+    # it gets a 2xx. Skip one we've already processed so a redelivery never re-runs
+    # work or re-calls the Razorpay API. (Handlers below are also idempotent — this
+    # is defense-in-depth and avoids redundant outbound calls.) We check BEFORE
+    # processing and record AFTER, so a crash mid-process leaves the event un-recorded
+    # and Razorpay's retry safely reprocesses it.
+    event_id = request.headers.get("X-Razorpay-Event-Id")
+    if event_id and await _webhook_event_seen(session, event_id):
+        return {"status": "duplicate", "event": etype}
+
     if etype in ("subscription.activated", "subscription.charged"):
         entity = (event.get("payload", {}).get("subscription", {}) or {}).get("entity", {}) or {}
         await _apply_activation(session, entity)
@@ -441,5 +479,8 @@ async def webhook(request: Request, session: AsyncSession = Depends(get_db)) -> 
         # during the retry window — it is only revoked on halt/cancel. No-op so an
         # active paying customer mid-retry is never wrongly downgraded.
         pass
+
+    if event_id:
+        await _record_webhook_event(session, event_id, etype)
 
     return {"status": "ok", "event": etype}

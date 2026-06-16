@@ -29,7 +29,32 @@ def parse_allowed_origins(raw: str | None) -> list[str]:
     return origins or ["*"]
 
 
-_allow_origins = parse_allowed_origins(os.environ.get("ALLOWED_ORIGINS"))
+def is_production_env(environment: str | None) -> bool:
+    """True when running in a deployed (non-local) environment. Railway sets
+    RAILWAY_ENVIRONMENT on every deploy; local dev and the test suite leave it
+    unset. Used to decide whether an open CORS policy must fail closed."""
+    env = (environment or "").strip().lower()
+    return env not in ("", "development", "dev", "local", "test")
+
+
+def resolve_cors_origins(raw: str | None, environment: str | None) -> list[str]:
+    """Allowed CORS origins, failing CLOSED in production. A deployed service with
+    ALLOWED_ORIGINS unset would otherwise serve `*` — letting any website call the
+    API in a logged-in user's browser context. Rather than silently ship that, we
+    refuse to boot so the misconfiguration is caught at deploy time, not in prod."""
+    origins = parse_allowed_origins(raw)
+    if origins == ["*"] and is_production_env(environment):
+        raise RuntimeError(
+            "ALLOWED_ORIGINS must be set in production (refusing to serve an open "
+            "CORS policy). Set it to your frontend origin(s), e.g. "
+            "ALLOWED_ORIGINS=https://app.specterapp.io"
+        )
+    return origins
+
+
+_allow_origins = resolve_cors_origins(
+    os.environ.get("ALLOWED_ORIGINS"), os.environ.get("RAILWAY_ENVIRONMENT")
+)
 
 app.add_middleware(
     CORSMiddleware,

@@ -9,6 +9,7 @@ from models.price_changes import PriceChange
 from models.merchant_addons import MerchantAddon
 from models.domain_exclusions import DomainExclusion
 from models.scrape_audit import ScrapeAudit
+from models.processed_webhook_events import ProcessedWebhookEvent
 
 __all__ = [
     "Merchant",
@@ -22,4 +23,5 @@ __all__ = [
     "MerchantAddon",
     "DomainExclusion",
     "ScrapeAudit",
+    "ProcessedWebhookEvent",
 ]

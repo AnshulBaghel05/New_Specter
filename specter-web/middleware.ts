@@ -73,8 +73,26 @@ export async function middleware(request: NextRequest) {
   return supabaseResponse
 }
 
+// Run the auth middleware ONLY on the routes that actually need a session: the
+// protected dashboard routes (redirect out when signed-out) and the auth pages
+// (redirect in when signed-in). Previously the matcher ran on every non-static
+// request — so every anonymous marketing/tool page hit triggered a network call
+// to Supabase Auth (supabase.auth.getUser()), adding latency and burning the
+// Supabase Auth rate limit at marketing-scale traffic. These prefixes cover the
+// (dashboard) route group (which adds no URL prefix) plus sign-in/sign-up.
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/dashboard/:path*',
+    '/workspace/:path*',
+    '/signals/:path*',
+    '/competitors/:path*',
+    '/products/:path*',
+    '/alerts/:path*',
+    '/repricing/:path*',
+    '/attribution/:path*',
+    '/settings/:path*',
+    '/billing/:path*',
+    '/sign-in/:path*',
+    '/sign-up/:path*',
   ],
 }
