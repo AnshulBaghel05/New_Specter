@@ -688,6 +688,45 @@ class TestCompetitorsRouter:
         assert resp.status_code == 402
         assert resp.json()["detail"]["error"] == "sku_limit_reached"
 
+    def test_post_competitors_eclipse_hits_absolute_tracking_ceiling(self, client: TestClient):
+        """ECLIPSE has no plan SKU limit (unlimited), but an absolute per-merchant
+        ceiling still applies so one account can't grow its scrape volume without
+        bound and exhaust shared capacity → 402 sku_limit_reached at the cap."""
+        from routers.competitors import ABSOLUTE_MAX_TRACKINGS_PER_MERCHANT
+
+        merchant = make_merchant(plan="eclipse")
+        sku = MagicMock(spec=SKU)
+        sku.id = uuid.uuid4()
+        sku.merchant_id = merchant.id
+
+        session = AsyncMock()
+        session.commit = AsyncMock()
+        at_ceiling = MagicMock()
+        at_ceiling.scalar_one = MagicMock(return_value=ABSOLUTE_MAX_TRACKINGS_PER_MERCHANT)
+
+        async def smart_get(model, pk):
+            if hasattr(model, "__tablename__") and model.__tablename__ == "skus":
+                return sku
+            return None
+
+        session.get = smart_get
+        session.execute = AsyncMock(return_value=at_ceiling)
+        session.add = MagicMock()
+
+        app.dependency_overrides[get_current_merchant] = override_merchant(merchant)
+        app.dependency_overrides[get_db] = override_db(session)
+
+        with patch("routers.competitors._check_url_reachable", return_value=True):
+            resp = client.post(
+                "/competitors",
+                json={"url": "https://amazon.com/dp/B09V3KXJPB", "own_product_id": str(sku.id)},
+            )
+
+        assert resp.status_code == 402
+        body = resp.json()["detail"]
+        assert body["error"] == "sku_limit_reached"
+        assert body["limit"] == ABSOLUTE_MAX_TRACKINGS_PER_MERCHANT
+
     def test_post_competitors_returns_409_for_duplicate(self, client: TestClient):
         """Same URL + same own_product → 409 already_tracking."""
         merchant = make_merchant(plan="recon")
