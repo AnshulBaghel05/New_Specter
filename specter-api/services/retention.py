@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import ColumnElement, and_, delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.competitor_trackings import CompetitorTracking
@@ -35,6 +35,12 @@ _RETAIN_90D_PLANS = frozenset({"predator", "eclipse"})
 RETENTION_DAYS_LONG = 90
 RETENTION_DAYS_SHORT = 30
 DOWNGRADE_GRACE_DAYS = 7
+
+# price_snapshots is the largest, fastest-growing table. Deleting an entire
+# retention tail in one statement would be a long, lock-heavy transaction at scale
+# (bloat + replication lag). Delete in bounded, separately-committed batches so each
+# DELETE is short and locks are released between chunks. Override via env for tuning.
+PURGE_BATCH_SIZE = 10_000
 
 
 def retention_days(plan: str) -> int:
@@ -56,10 +62,33 @@ def _urls_tracked_by_90d_plans():
     )
 
 
+async def _delete_snapshots_batched(
+    session: AsyncSession,
+    where_clause: ColumnElement[bool],
+    batch_size: int = PURGE_BATCH_SIZE,
+) -> int:
+    """Delete every price_snapshot matching `where_clause` in bounded batches,
+    committing each batch so a huge sweep never becomes one long lock-heavy
+    transaction. Postgres has no `DELETE ... LIMIT`, so each batch deletes the rows
+    whose id is in a LIMITed subquery. Returns the total rows deleted."""
+    total = 0
+    while True:
+        ids = select(PriceSnapshot.id).where(where_clause).limit(batch_size)
+        res = await session.execute(
+            delete(PriceSnapshot).where(PriceSnapshot.id.in_(ids))
+        )
+        await session.commit()
+        n = res.rowcount or 0
+        total += n
+        if n < batch_size:   # last (partial) batch — nothing left to delete
+            break
+    return total
+
+
 async def purge_expired_snapshots(session: AsyncSession, now: datetime | None = None) -> int:
     """Delete price_snapshots past their effective retention. Returns rows deleted.
 
-    Three passes:
+    Three passes, each run in committed batches (see _delete_snapshots_batched):
       (a) any row whose scheduled delete_at has arrived (downgrade grace expired);
       (b) hard cap — nothing is retained beyond 90 days;
       (c) rows in the 30–90 day band whose URL is NOT tracked by a 90-day merchant.
@@ -70,35 +99,28 @@ async def purge_expired_snapshots(session: AsyncSession, now: datetime | None = 
     deleted = 0
 
     # (a) scheduled deletions whose grace window has elapsed.
-    res = await session.execute(
-        delete(PriceSnapshot).where(
-            PriceSnapshot.delete_at.is_not(None),
-            PriceSnapshot.delete_at <= now,
-        )
+    deleted += await _delete_snapshots_batched(
+        session,
+        and_(PriceSnapshot.delete_at.is_not(None), PriceSnapshot.delete_at <= now),
     )
-    deleted += res.rowcount or 0
 
     # (b) hard 90-day cap (no merchant retains beyond this).
-    res = await session.execute(
-        delete(PriceSnapshot).where(
-            PriceSnapshot.delete_at.is_(None),
-            PriceSnapshot.scraped_at < cutoff_90,
-        )
+    deleted += await _delete_snapshots_batched(
+        session,
+        and_(PriceSnapshot.delete_at.is_(None), PriceSnapshot.scraped_at < cutoff_90),
     )
-    deleted += res.rowcount or 0
 
     # (c) 30–90 day band dies unless a 90-day merchant tracks the URL.
-    res = await session.execute(
-        delete(PriceSnapshot).where(
+    deleted += await _delete_snapshots_batched(
+        session,
+        and_(
             PriceSnapshot.delete_at.is_(None),
             PriceSnapshot.scraped_at < cutoff_30,
             PriceSnapshot.scraped_at >= cutoff_90,
             PriceSnapshot.competitor_url_id.not_in(_urls_tracked_by_90d_plans()),
-        )
+        ),
     )
-    deleted += res.rowcount or 0
 
-    await session.commit()
     return deleted
 
 

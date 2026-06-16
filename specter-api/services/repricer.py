@@ -68,12 +68,8 @@ def compute_reprice(
         return None
 
     if signal == "RAISE":
-        # Undercut the cheapest in-stock competitor by a penny, capped at ceiling.
+        # Undercut the cheapest in-stock competitor by a penny.
         target = min(instock_competitor_prices) - PENNY
-        clamped: Optional[str] = None
-        if ceiling_price is not None and target > ceiling_price:
-            target = ceiling_price
-            clamped = "ceiling"
         reason = (
             f"RAISE: undercut lowest in-stock competitor "
             f"(${min(instock_competitor_prices):.2f}) by $0.01"
@@ -81,11 +77,21 @@ def compute_reprice(
     else:  # LOWER
         median_price = Decimal(str(statistics.median(float(p) for p in instock_competitor_prices)))
         target = median_price - PENNY
-        clamped = None
-        if floor_price is not None and target < floor_price:
-            target = floor_price
-            clamped = "floor"
         reason = f"LOWER: match market median (${median_price:.2f}) minus $0.01"
+
+    # Clamp into [floor, ceiling] regardless of signal direction. Previously RAISE
+    # honored only the ceiling and LOWER only the floor, so a wrong-direction signal
+    # (e.g. a RAISE whose target lands below floor_price) could breach the unclamped
+    # bound and sell below the merchant's floor. The floor is the stronger guarantee
+    # (never sell below it), so it is applied last and wins if a floor > ceiling
+    # misconfiguration ever makes both apply.
+    clamped: Optional[str] = None
+    if ceiling_price is not None and target > ceiling_price:
+        target = ceiling_price
+        clamped = "ceiling"
+    if floor_price is not None and target < floor_price:
+        target = floor_price
+        clamped = "floor"
 
     target = _q(target)
     if target <= 0:

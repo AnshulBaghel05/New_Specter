@@ -42,7 +42,9 @@ def test_retention_cutoff_subtracts_retention_window():
 
 def test_purge_expired_snapshots_sums_rowcounts_and_commits():
     session = AsyncMock()
-    # Three delete passes (grace, hard-cap, 30–90 band).
+    # Three delete passes (grace, hard-cap, 30–90 band). Each pass deletes in
+    # batches and commits per batch; with a single (sub-batch-size) chunk each, that
+    # is one execute + one commit per pass.
     session.execute = AsyncMock(side_effect=[
         MagicMock(rowcount=2),
         MagicMock(rowcount=5),
@@ -53,7 +55,27 @@ def test_purge_expired_snapshots_sums_rowcounts_and_commits():
     )
     assert deleted == 10
     assert session.execute.await_count == 3
-    session.commit.assert_awaited_once()
+    assert session.commit.await_count == 3   # per-batch commit (lock-release)
+
+
+def test_purge_deletes_in_multiple_batches_until_drained():
+    """A pass with more rows than one batch loops until a partial batch arrives."""
+    from services.retention import _delete_snapshots_batched
+    from models.price_snapshots import PriceSnapshot
+
+    session = AsyncMock()
+    # Two full batches (size 3) then a partial (1) → loop stops.
+    session.execute = AsyncMock(side_effect=[
+        MagicMock(rowcount=3),
+        MagicMock(rowcount=3),
+        MagicMock(rowcount=1),
+    ])
+    deleted = asyncio.run(
+        _delete_snapshots_batched(session, PriceSnapshot.delete_at.is_(None), batch_size=3)
+    )
+    assert deleted == 7
+    assert session.execute.await_count == 3
+    assert session.commit.await_count == 3
 
 
 def test_purge_handles_none_rowcount():
