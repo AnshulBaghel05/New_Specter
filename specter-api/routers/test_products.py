@@ -41,10 +41,12 @@ def test_assemble_groups_competitors_under_product_and_derives_source():
         skus=[sku], trackings=[tracking],
         url_by_id={url_id: url}, snapshot_by_url={url_id: snap},
         signal_by_sku={p_id: sig}, total=1, sku_used=1, sku_limit=100, max_competitors_per_sku=3,
+        plan_interval_ms=21_600_000, now=datetime(2026, 6, 16, tzinfo=timezone.utc),
     )
     assert out.sku_used == 1 and out.sku_limit == 100 and out.max_competitors_per_sku == 3
     assert out.total == 1
     assert len(out.items) == 1
+    assert out.items[0].competitors[0].status == "live"  # has price, no dispatch record
     item = out.items[0]
     assert item.source == "shopify"          # shopify_variant_id present
     assert item.competitor_count == 1
@@ -78,6 +80,7 @@ def test_decimal_fields_serialize_to_json_numbers_not_strings():
         skus=[sku], trackings=[tracking],
         url_by_id={url_id: url}, snapshot_by_url={url_id: snap},
         signal_by_sku={p_id: sig}, total=1, sku_used=1, sku_limit=100, max_competitors_per_sku=3,
+        plan_interval_ms=21_600_000, now=datetime(2026, 6, 16, tzinfo=timezone.utc),
     )
     import json
     body = json.loads(out.model_dump_json())
@@ -102,6 +105,7 @@ def test_assemble_manual_source_and_missing_snapshot_and_signal():
         skus=[sku], trackings=[tracking],
         url_by_id={url_id: url}, snapshot_by_url={}, signal_by_sku={},
         total=1, sku_used=1, sku_limit=None, max_competitors_per_sku=None,
+        plan_interval_ms=21_600_000, now=datetime(2026, 6, 16, tzinfo=timezone.utc),
     )
     item = out.items[0]
     assert item.source == "manual"            # no shopify_variant_id
@@ -131,10 +135,78 @@ def test_last_checked_at_prefers_url_last_scraped_at_over_snapshot():
         skus=[sku], trackings=[tracking],
         url_by_id={url_id: url}, snapshot_by_url={url_id: snap},
         signal_by_sku={}, total=1, sku_used=1, sku_limit=100, max_competitors_per_sku=3,
+        plan_interval_ms=21_600_000, now=datetime(2026, 6, 16, tzinfo=timezone.utc),
     )
     c = out.items[0].competitors[0]
     # The recent URL check wins over the stale snapshot timestamp.
     assert c.last_checked_at == "2026-06-15T12:00:00+00:00"
+
+
+# ── derive_competitor_status (pure) ──────────────────────────────────────────
+
+def test_status_blocked_wins():
+    from routers.products import derive_competitor_status
+    now = datetime(2026, 6, 16, tzinfo=timezone.utc)
+    s, _ = derive_competitor_status(
+        robots_blocked=True, last_dispatch_at=now, has_price=True,
+        plan_interval_ms=21_600_000, now=now,
+    )
+    assert s == "blocked"
+
+
+def test_status_pending_when_never_dispatched_and_no_price():
+    from routers.products import derive_competitor_status
+    now = datetime(2026, 6, 16, tzinfo=timezone.utc)
+    s, _ = derive_competitor_status(
+        robots_blocked=False, last_dispatch_at=None, has_price=False,
+        plan_interval_ms=21_600_000, now=now,
+    )
+    assert s == "pending"
+
+
+def test_status_failing_when_dispatched_but_no_price():
+    from routers.products import derive_competitor_status
+    now = datetime(2026, 6, 16, tzinfo=timezone.utc)
+    s, _ = derive_competitor_status(
+        robots_blocked=False, last_dispatch_at=now, has_price=False,
+        plan_interval_ms=21_600_000, now=now,
+    )
+    assert s == "failing"
+
+
+def test_status_live_when_recently_dispatched_with_price():
+    from routers.products import derive_competitor_status
+    now = datetime(2026, 6, 16, 12, 0, tzinfo=timezone.utc)
+    recent = datetime(2026, 6, 16, 10, 0, tzinfo=timezone.utc)  # 2h ago, < 2×6h
+    s, _ = derive_competitor_status(
+        robots_blocked=False, last_dispatch_at=recent, has_price=True,
+        plan_interval_ms=21_600_000, now=now,
+    )
+    assert s == "live"
+
+
+def test_status_stale_when_dispatch_older_than_two_intervals():
+    from routers.products import derive_competitor_status
+    now = datetime(2026, 6, 16, 12, 0, tzinfo=timezone.utc)
+    old = datetime(2026, 6, 15, 0, 0, tzinfo=timezone.utc)  # 36h ago, > 2×6h=12h
+    s, _ = derive_competitor_status(
+        robots_blocked=False, last_dispatch_at=old, has_price=True,
+        plan_interval_ms=21_600_000, now=now,
+    )
+    assert s == "stale"
+
+
+def test_status_stable_url_is_live_not_stale_despite_old_snapshot():
+    """Skip-unchanged keeps an old snapshot on a healthy URL; freshness is judged
+    on the DISPATCH, so a recently-dispatched stable URL is 'live', not 'stale'."""
+    from routers.products import derive_competitor_status
+    now = datetime(2026, 6, 16, 12, 0, tzinfo=timezone.utc)
+    recent_dispatch = datetime(2026, 6, 16, 11, 0, tzinfo=timezone.utc)  # 1h ago
+    s, _ = derive_competitor_status(
+        robots_blocked=False, last_dispatch_at=recent_dispatch, has_price=True,
+        plan_interval_ms=21_600_000, now=now,
+    )
+    assert s == "live"
 
 
 # ── Route smoke test ─────────────────────────────────────────────────────────

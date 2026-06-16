@@ -13,11 +13,11 @@ describe('groupByDomain', () => {
     const products: Product[] = [
       product({ id: 'a', current_price: 100, competitors: [
         { tracking_id: 't1', competitor_url_id: 'u1', url: 'https://amazon.com/x', domain: 'amazon.com',
-          enabled: true, silenced_oos: false, robots_blocked: false, latest_price: 90, in_stock: true, last_checked_at: '2026-05-31T00:00:00Z' },
+          enabled: true, silenced_oos: false, robots_blocked: false, latest_price: 90, in_stock: true, last_checked_at: '2026-05-31T00:00:00Z', status: 'live', status_label: 'Tracking normally' },
       ] }),
       product({ id: 'b', current_price: 100, competitors: [
         { tracking_id: 't2', competitor_url_id: 'u2', url: 'https://amazon.com/y', domain: 'amazon.com',
-          enabled: true, silenced_oos: false, robots_blocked: false, latest_price: 110, in_stock: false, last_checked_at: '2026-05-31T00:00:00Z' },
+          enabled: true, silenced_oos: false, robots_blocked: false, latest_price: 110, in_stock: false, last_checked_at: '2026-05-31T00:00:00Z', status: 'live', status_label: 'Tracking normally' },
       ] }),
     ]
     const groups = groupByDomain(products)
@@ -35,7 +35,7 @@ describe('groupByDomain', () => {
   it('marks domain blocked when any pairing is robots_blocked', () => {
     const products: Product[] = [product({ competitors: [
       { tracking_id: 't', competitor_url_id: 'u', url: 'https://x.com/p', domain: 'x.com',
-        enabled: true, silenced_oos: false, robots_blocked: true, latest_price: null, in_stock: null, last_checked_at: null },
+        enabled: true, silenced_oos: false, robots_blocked: true, latest_price: null, in_stock: null, last_checked_at: null, status: 'blocked', status_label: 'Blocked' },
     ] })]
     expect(groupByDomain(products)[0].health).toBe('blocked')
   })

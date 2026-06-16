@@ -10,6 +10,7 @@ SKU = one (product × competitor) pairing. Limit = COUNT(enabled trackings).
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Annotated, Optional
 
@@ -27,6 +28,7 @@ from models.merchants import Merchant
 from models.price_snapshots import PriceSnapshot
 from models.signals import Signal
 from models.skus import SKU
+from services.scrape_scheduler import PLAN_INTERVALS_MS
 
 router = APIRouter(prefix="/products", tags=["products"])
 
@@ -50,6 +52,41 @@ class CompetitorRow(BaseModel):
     latest_price: Optional[Money]
     in_stock: Optional[bool]
     last_checked_at: Optional[str]
+    # Per-URL scrape health, derived from DB state (no extra query): one of
+    # live | stale | failing | pending | blocked, plus a human label.
+    status: str
+    status_label: str
+
+
+def derive_competitor_status(
+    *,
+    robots_blocked: bool,
+    last_dispatch_at: Optional[datetime],
+    has_price: bool,
+    plan_interval_ms: int,
+    now: datetime,
+) -> tuple[str, str]:
+    """Turn a tracked URL's persisted state into a user-facing scrape status —
+    so a silently-failing or blocked competitor is visible, not a stale price.
+    Returns (status, label). Pure (no I/O), so it's unit-tested directly.
+
+    Freshness is judged on the last DISPATCH, never the last snapshot: with the
+    skip-unchanged write optimization a healthy-but-stable URL keeps an old
+    snapshot, so snapshot age would falsely read "stale".
+    """
+    if robots_blocked:
+        return "blocked", "Blocked by robots.txt or bot protection"
+    if not has_price:
+        if last_dispatch_at is None:
+            return "pending", "Queued — first check in progress"
+        return "failing", "Checked, but no price could be read yet"
+    # Has at least one good price.
+    if last_dispatch_at is None:
+        return "live", "Tracking normally"
+    stale_after = timedelta(milliseconds=max(plan_interval_ms, 1) * 2)
+    if now - last_dispatch_at > stale_after:
+        return "stale", "Checks are overdue — last fetch is older than expected"
+    return "live", "Tracking normally"
 
 
 class LatestSignal(BaseModel):
@@ -101,6 +138,8 @@ def assemble_products(
     sku_used: int,
     sku_limit: Optional[int],
     max_competitors_per_sku: Optional[int],
+    plan_interval_ms: int,
+    now: datetime,
 ) -> ProductsOut:
     """Build the ProductsOut tree from already-fetched rows / lookup dicts.
 
@@ -121,9 +160,19 @@ def assemble_products(
             # maintained at dispatch), so it stays accurate when an unchanged
             # scrape is skip-written (no new snapshot row). Fall back to the
             # latest snapshot's scraped_at when the URL has no recorded check yet.
-            last_checked = getattr(url, "last_scraped_at", None) if url else None
+            last_dispatch = getattr(url, "last_scraped_at", None) if url else None
+            last_checked = last_dispatch
             if last_checked is None and snap is not None:
                 last_checked = snap.scraped_at
+            robots_blocked = url.robots_blocked if url else False
+            has_price = snap is not None and snap.price is not None
+            status, status_label = derive_competitor_status(
+                robots_blocked=robots_blocked,
+                last_dispatch_at=last_dispatch,
+                has_price=has_price,
+                plan_interval_ms=plan_interval_ms,
+                now=now,
+            )
             rows.append(CompetitorRow(
                 tracking_id=t.id,
                 competitor_url_id=t.competitor_url_id,
@@ -131,10 +180,12 @@ def assemble_products(
                 domain=url.domain if url else "",
                 enabled=t.enabled,
                 silenced_oos=t.silenced_oos,
-                robots_blocked=url.robots_blocked if url else False,
+                robots_blocked=robots_blocked,
                 latest_price=snap.price if snap else None,
                 in_stock=snap.in_stock if snap else None,
                 last_checked_at=last_checked.isoformat() if last_checked else None,
+                status=status,
+                status_label=status_label,
             ))
         sig = signal_by_sku.get(sku.id)
         latest = LatestSignal(
@@ -245,6 +296,14 @@ async def list_products(
         )
     )).scalar_one()
 
+    # Per-URL freshness is judged against the merchant's plan cadence (ECLIPSE uses
+    # its merchant-configured interval).
+    plan = (merchant.plan or "recon").lower()
+    plan_interval_ms = (
+        merchant.eclipse_interval_ms if plan == "eclipse"
+        else PLAN_INTERVALS_MS.get(plan, PLAN_INTERVALS_MS["recon"])
+    )
+
     return assemble_products(
         skus=skus,
         trackings=trackings,
@@ -255,4 +314,6 @@ async def list_products(
         sku_used=sku_used,
         sku_limit=plan_max_skus(merchant.plan),
         max_competitors_per_sku=competitor_limit_for(merchant.plan, merchant.max_competitors_per_sku),
+        plan_interval_ms=plan_interval_ms,
+        now=datetime.now(tz=timezone.utc),
     )

@@ -12,6 +12,15 @@ const SIGNAL_TONE: Record<string, string> = {
   RAISE: 'text-emerald-400', LOWER: 'text-rose-400', HOLD: 'text-amber-400',
 }
 
+// Per-URL scrape health → dot tone + short label (full reason in the title tooltip).
+const STATUS_TONE: Record<string, string> = {
+  live: 'text-emerald-400', stale: 'text-amber-400',
+  failing: 'text-rose-400', blocked: 'text-rose-400', pending: 'text-muted/70',
+}
+const STATUS_LABEL: Record<string, string> = {
+  live: 'live', stale: 'stale', failing: 'failing', blocked: 'blocked', pending: 'queued',
+}
+
 export default function ProductRow({ product, maxCompetitors }: { product: Product; maxCompetitors: number | null }) {
   const [open, setOpen] = useState(false)
   const sig = product.latest_signal
@@ -62,6 +71,12 @@ export default function ProductRow({ product, maxCompetitors }: { product: Produ
               </span>
               <span className={cn('w-16 text-right', c.in_stock === false ? 'text-rose-400' : c.in_stock ? 'text-emerald-400' : 'text-muted/60')}>
                 {c.in_stock == null ? 'checking…' : c.in_stock ? 'in-stock' : 'OOS'}
+              </span>
+              <span
+                className={cn('w-16 text-right', STATUS_TONE[c.status] ?? 'text-muted/60')}
+                title={c.status_label}
+              >
+                ● {STATUS_LABEL[c.status] ?? c.status}
               </span>
               <span className="text-muted/70 w-16 text-right">{c.last_checked_at ? timeAgo(c.last_checked_at) : '—'}</span>
               <CompetitorRowMenu trackingId={c.tracking_id} silenced={c.silenced_oos} />

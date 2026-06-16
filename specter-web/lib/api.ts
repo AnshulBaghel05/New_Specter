@@ -794,6 +794,8 @@ export async function downloadAttributionCsv(): Promise<boolean> {
 // PRODUCTS WORKSPACE
 // ════════════════════════════════════════════════════════════════════════════
 
+export type CompetitorStatus = 'live' | 'stale' | 'failing' | 'pending' | 'blocked'
+
 export interface ProductCompetitor {
   tracking_id: string
   competitor_url_id: string
@@ -805,6 +807,8 @@ export interface ProductCompetitor {
   latest_price: number | null
   in_stock: boolean | null
   last_checked_at: string | null
+  status: CompetitorStatus      // derived scrape health (see products.py)
+  status_label: string          // human-readable reason (tooltip)
 }
 
 export interface ProductSignal {
