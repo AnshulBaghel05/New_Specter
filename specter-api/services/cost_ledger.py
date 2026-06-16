@@ -3,6 +3,7 @@ counters; a daily flush rolls them into merchant_cost_daily. A shared crawl's
 cost is split across the distinct merchants sharing it. Never raises into ingest."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import random as _random
 import uuid
@@ -42,7 +43,7 @@ def _accrue(redis, session, m: str, day: str, ctype: str, cost: float,
             units=units, cost_usd=cost, domain=domain))
 
 
-async def record_scrape_cost(session: AsyncSession, redis, merchant_ids, proxy_tier,
+def _record_scrape_cost_sync(session: AsyncSession, redis, merchant_ids, proxy_tier,
                              resp_bytes, captcha_solved, *, domain=None,
                              now=None, rng=_random) -> None:
     try:
@@ -63,7 +64,19 @@ async def record_scrape_cost(session: AsyncSession, redis, merchant_ids, proxy_t
         logger.exception("record_scrape_cost failed (best-effort, ignored)")
 
 
-async def record_ai_cost(session: AsyncSession, redis, merchant_id, model,
+async def record_scrape_cost(session: AsyncSession, redis, merchant_ids, proxy_tier,
+                             resp_bytes, captcha_solved, *, domain=None,
+                             now=None, rng=_random) -> None:
+    """Best-effort per-merchant cost accrual. The work is synchronous Redis counter
+    writes + sample staging (sync redis client), so it runs in a worker thread via
+    asyncio.to_thread — it never blocks the event loop on the hot ingest path."""
+    await asyncio.to_thread(
+        _record_scrape_cost_sync, session, redis, merchant_ids, proxy_tier,
+        resp_bytes, captcha_solved, domain=domain, now=now, rng=rng,
+    )
+
+
+def _record_ai_cost_sync(session: AsyncSession, redis, merchant_id, model,
                          input_tokens, output_tokens, *, now=None, rng=_random) -> None:
     try:
         now = now or datetime.now(timezone.utc)
@@ -74,6 +87,15 @@ async def record_ai_cost(session: AsyncSession, redis, merchant_id, model,
                 float(int(input_tokens or 0) + int(output_tokens or 0)), None, None, rng)
     except Exception:
         logger.exception("record_ai_cost failed (best-effort, ignored)")
+
+
+async def record_ai_cost(session: AsyncSession, redis, merchant_id, model,
+                         input_tokens, output_tokens, *, now=None, rng=_random) -> None:
+    """Best-effort AI cost accrual, offloaded to a thread (see record_scrape_cost)."""
+    await asyncio.to_thread(
+        _record_ai_cost_sync, session, redis, merchant_id, model,
+        input_tokens, output_tokens, now=now, rng=rng,
+    )
 
 
 async def _upsert_daily(session: AsyncSession, m: str, day: str, ctype: str,

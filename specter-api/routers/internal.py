@@ -13,6 +13,7 @@ cannot stall a merchant's signals.
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import uuid
 from datetime import datetime, timezone
@@ -328,7 +329,7 @@ async def _ingest(session: AsyncSession, redis_client: Redis, items: list[Snapsh
     # Side-effects run once per new snapshot only (idempotent against retries).
     for item, cu_id, snap_id in new_snapshots:
         await dispatch_on_snapshot(session, redis_client, cu_id, snap_id, item.in_stock)
-        _record_cycles(store, fired, item.merchant_cycle_ids)
+        await asyncio.to_thread(_record_cycles, store, fired, item.merchant_cycle_ids)
         await _write_audit(session, item.domain, "stored",
                            item.robots_decision, item.proxy_tier)
         # One fetch's cost, split across the merchants sharing this crawl (Audit #4).
@@ -343,7 +344,7 @@ async def _ingest(session: AsyncSession, redis_client: Redis, items: list[Snapsh
     # still happened — advance the cycle and record its cost so signals don't stall
     # and cost accounting stays correct.
     for item, _cu_id in unchanged:
-        _record_cycles(store, fired, item.merchant_cycle_ids)
+        await asyncio.to_thread(_record_cycles, store, fired, item.merchant_cycle_ids)
         await _write_audit(session, item.domain, "unchanged",
                            item.robots_decision, item.proxy_tier)
         await record_scrape_cost(
@@ -385,7 +386,7 @@ async def scrape_failed(
     # A failed URL still advances the cycle so a banned competitor can't stall signals.
     store = RedisCycleStore(redis_client)
     fired: list[str] = []
-    _record_cycles(store, fired, body.merchant_cycle_ids)
+    await asyncio.to_thread(_record_cycles, store, fired, body.merchant_cycle_ids)
     await _write_audit(session, body.domain, "failed", body.robots_decision, body.proxy_tier)
     # A failed fetch still spent proxy/CAPTCHA budget — attribute it (Audit #4).
     await record_scrape_cost(
@@ -412,7 +413,7 @@ async def domain_blocked(
     )
     store = RedisCycleStore(redis_client)
     fired: list[str] = []
-    _record_cycles(store, fired, body.merchant_cycle_ids)
+    await asyncio.to_thread(_record_cycles, store, fired, body.merchant_cycle_ids)
     await _write_audit(session, body.domain, "blocked")
     cycles_fired = await _fire_cycle_signals(session, redis_client, fired)
     await session.commit()

@@ -20,6 +20,7 @@ Plan enforcement (server-side only — frontend shows meters but backend is the 
 """
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -296,9 +297,11 @@ async def add_competitor(
     await session.commit()
     await session.refresh(tracking)
 
-    # 7. Queue probe job immediately (F2 AC#4 — not on next scheduled run)
+    # 7. Queue probe job immediately (F2 AC#4 — not on next scheduled run).
+    #    enqueue_probe_job uses the sync redis client, so run it off the event loop.
     try:
-        enqueue_probe_job(
+        await asyncio.to_thread(
+            enqueue_probe_job,
             redis_client,
             url=body.url,
             domain=domain,
