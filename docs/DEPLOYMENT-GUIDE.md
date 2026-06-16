@@ -9,9 +9,11 @@ them together:
 | **Backend API** | `specter-api` | **Railway** | FastAPI app (auth, billing, signals, CRUD) |
 | **Scraper** | `specter-api/scraper` | **Railway** | Node/BullMQ scheduler + workers + ops UI |
 
-> This is the **comprehensive** guide. `docs/DEPLOY.md` is the quick runbook and
-> `docs/DEPLOY-BILLING.md` covers the Razorpay dashboard setup in depth — both
-> are referenced from here.
+> **For the exhaustive, copy-pasteable step-by-step** (every Railway service,
+> every env var, every UI option, plus verification + troubleshooting) see
+> **[`DEPLOYMENT-RUNBOOK.md`](DEPLOYMENT-RUNBOOK.md)**. This page is the
+> architectural overview; `docs/DEPLOY.md` is the quick runbook and
+> `docs/DEPLOY-BILLING.md` covers the Razorpay dashboard setup in depth.
 >
 > **Auth is Supabase** (not Clerk). The frontend signs in with Supabase; the API
 > validates the Supabase JWT on every request.
