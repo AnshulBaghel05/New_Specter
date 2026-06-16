@@ -143,13 +143,24 @@ async def _resolve_competitor_url_id(session: AsyncSession, domain: str, url_pat
 
 
 def _skip_unchanged() -> bool:
-    """Skip-write optimization toggle (off by default to preserve exact behavior).
+    """Skip-write optimization toggle (ON by default).
 
     When on, a snapshot whose (price, in_stock) equals the last stored value for
-    its URL is NOT re-inserted (storage/write saving) — but the cycle still
-    advances and the fetch cost is still recorded, so signals never stall and cost
-    accounting stays accurate. Roll out via env after validating in staging."""
-    return os.environ.get("SNAPSHOT_SKIP_UNCHANGED", "false").lower() in ("1", "true", "yes")
+    its URL is NOT re-inserted (saves unbounded price_snapshots growth) — but the
+    cycle still advances, the fetch cost is still recorded, and an audit row is
+    written, so signals, cost accounting, and the audit trail are unaffected. Set
+    SNAPSHOT_SKIP_UNCHANGED=false to force every snapshot to be written.
+
+    Safe to default on:
+      - An in_stock transition is never "unchanged", so it is always written and
+        OOS detection (edge-triggered, see signals/oos_detector.py) always fires.
+      - The latest unchanged snapshot already carries the same price/stock the
+        signal engine reads, so RAISE/LOWER/HOLD + AI output are identical (the
+        AI dedup hash excludes scraped_at).
+      - Per-URL freshness is surfaced from competitor_urls.last_scraped_at
+        (maintained at dispatch), not the snapshot, so "last checked" stays
+        accurate even when the write is skipped."""
+    return os.environ.get("SNAPSHOT_SKIP_UNCHANGED", "true").lower() in ("1", "true", "yes")
 
 
 async def _last_values(

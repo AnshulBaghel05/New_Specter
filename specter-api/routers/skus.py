@@ -65,6 +65,13 @@ class SKUCountOut(BaseModel):
 
 router = APIRouter(prefix="/skus", tags=["skus"])
 
+# Absolute ceiling on SKU rows a single merchant may hold via manual creation.
+# Plan SKU *limits* count enabled competitor trackings (the billing unit), not
+# product rows — so POST /skus is otherwise unbounded and a merchant could spam
+# product rows to bloat the table. This is a high abuse ceiling, well above any
+# realistic manual catalog; the Shopify import path is trusted and not capped here.
+MAX_SKUS_PER_MERCHANT = 10_000
+
 
 @router.get("", response_model=list[SKUOut])
 async def list_skus(
@@ -128,6 +135,16 @@ async def create_sku(
     merchant: Merchant = Depends(get_current_merchant),
     session: AsyncSession = Depends(get_db),
 ) -> SKUOut:
+    count = (await session.execute(
+        select(func.count()).where(SKU.merchant_id == merchant.id)
+    )).scalar_one()
+    if count >= MAX_SKUS_PER_MERCHANT:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error": "sku_limit_reached",
+                    "message": f"You can hold up to {MAX_SKUS_PER_MERCHANT} products."},
+        )
+
     sku = SKU(
         merchant_id=merchant.id,
         title=body.title,

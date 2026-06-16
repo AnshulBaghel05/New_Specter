@@ -33,6 +33,7 @@ def test_ingest_records_scrape_cost_for_new_snapshot():
     internal._bulk_upsert_snapshots = AsyncMock(return_value={j: uuid.uuid4()})
     internal.dispatch_on_snapshot = AsyncMock()
     internal.generate_cycle_signals = AsyncMock()
+    internal._last_values = AsyncMock(return_value={})  # skip-write on by default: no priors → nothing unchanged
     cost = AsyncMock()
     internal.record_scrape_cost = cost
 
@@ -75,6 +76,7 @@ def test_ingest_skips_cost_for_retried_snapshot():
     internal._bulk_upsert_snapshots = AsyncMock(return_value={})
     internal.dispatch_on_snapshot = AsyncMock()
     internal.generate_cycle_signals = AsyncMock()
+    internal._last_values = AsyncMock(return_value={})  # skip-write on by default: no priors → nothing unchanged
     cost = AsyncMock()
     internal.record_scrape_cost = cost
 
@@ -99,6 +101,7 @@ def test_scrape_failed_records_scrape_cost():
 
     internal._write_audit = AsyncMock()
     internal.generate_cycle_signals = AsyncMock()
+    internal._last_values = AsyncMock(return_value={})  # skip-write on by default: no priors → nothing unchanged
     cost = AsyncMock()
     internal.record_scrape_cost = cost
 

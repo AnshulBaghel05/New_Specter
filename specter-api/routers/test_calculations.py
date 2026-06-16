@@ -129,6 +129,9 @@ def test_create_persists_and_returns_201(client):
     session = AsyncMock()
     created = {}
 
+    # The cap check counts existing rows first; this merchant has 0.
+    session.execute = AsyncMock(return_value=MagicMock(scalar_one=MagicMock(return_value=0)))
+
     def _add(obj):
         # mimic DB defaults assigned on flush/refresh
         obj.id = uuid.uuid4()
@@ -156,6 +159,28 @@ def test_create_persists_and_returns_201(client):
     assert body["archived"] is False
     # row was scoped to the authenticated merchant
     assert created["calc"].merchant_id == m.id
+
+
+def test_create_rejected_at_calculation_cap(client):
+    """At the per-merchant cap, POST /calculations → 409 and never persists."""
+    from routers.calculations import MAX_CALCULATIONS_PER_MERCHANT
+
+    m = _merchant()
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=MagicMock(
+        scalar_one=MagicMock(return_value=MAX_CALCULATIONS_PER_MERCHANT)))
+    session.add = MagicMock()
+    session.commit = AsyncMock()
+    _wire(m, session)
+
+    resp = client.post("/calculations", json={
+        "tool_name": "shipping", "name": "one too many",
+        "inputs": {}, "results": {},
+    })
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["error"] == "calculation_limit_reached"
+    session.add.assert_not_called()
+    session.commit.assert_not_awaited()
 
 
 def test_get_other_merchants_calc_returns_404(client):

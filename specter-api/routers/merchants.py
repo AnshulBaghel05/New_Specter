@@ -21,6 +21,8 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
+import re
+import secrets
 import uuid
 from typing import Optional
 from urllib.parse import urlencode
@@ -49,6 +51,50 @@ _REDIRECT_URI       = os.environ.get("SHOPIFY_REDIRECT_URI", "")
 _SCOPES             = os.environ.get("SHOPIFY_SCOPES", "read_products,write_products")
 _DASHBOARD_URL      = os.environ.get("DASHBOARD_URL", "/dashboard")
 _ENCRYPTION_KEY     = os.environ.get("ENCRYPTION_KEY", "")
+
+
+# Shopify store domains are always `<handle>.myshopify.com` (the Admin API only
+# accepts these — custom domains never work for OAuth/token exchange). `shop`
+# arrives as an untrusted query param and is interpolated into outbound URLs
+# (authorize, token exchange, Admin API), so it MUST be validated against this
+# pattern before any use — otherwise an attacker-controlled `shop` causes the
+# server to POST the app's client_secret to their host (credential exfiltration)
+# or fetch internal addresses (SSRF).
+_SHOP_DOMAIN_RE = re.compile(r"[a-z0-9][a-z0-9-]*\.myshopify\.com")
+
+
+def _is_valid_shop_domain(shop: str) -> bool:
+    return bool(_SHOP_DOMAIN_RE.fullmatch((shop or "").strip().lower()))
+
+
+# ── OAuth CSRF state ─────────────────────────────────────────────────────────
+# The OAuth `state` round-trips through Shopify; without verifying it, the
+# callback would accept any attacker-supplied code/shop (login CSRF — an
+# attacker connects THEIR store to a victim's account). We issue a stateless
+# signed token binding the flow to the initiating merchant: HMAC over
+# "{merchant_id}.{nonce}" with the app secret. The callback recomputes the
+# signature and confirms the embedded merchant matches the authenticated one.
+# Stateless (no DB/Redis) so begin and callback need not share storage.
+_OAUTH_STATE_SECRET = (_SHOPIFY_API_SECRET or "").encode()
+
+
+def _issue_oauth_state(merchant_id: uuid.UUID) -> str:
+    payload = f"{merchant_id}.{secrets.token_urlsafe(16)}"
+    sig = hmac.new(_OAUTH_STATE_SECRET, payload.encode(), hashlib.sha256).hexdigest()
+    return f"{payload}.{sig}"
+
+
+def _verify_oauth_state(state: Optional[str], merchant_id: uuid.UUID) -> bool:
+    if not state:
+        return False
+    try:
+        mid, nonce, sig = state.split(".")
+    except ValueError:
+        return False
+    expected = hmac.new(
+        _OAUTH_STATE_SECRET, f"{mid}.{nonce}".encode(), hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(sig, expected) and hmac.compare_digest(mid, str(merchant_id))
 
 
 def _fernet() -> Fernet:
@@ -160,29 +206,47 @@ async def _import_shopify_skus(
                     break
 
                 products = resp.json().get("products", [])
+
+                # Flatten this page's variants, then batch-load existing SKUs in
+                # ONE query. The previous per-variant SELECT was an N+1 that scaled
+                # with catalog size — a large store could fire thousands of queries
+                # and time the import out.
+                from sqlalchemy import select
+
+                variants_by_id: dict[str, dict] = {}
+                product_by_variant: dict[str, dict] = {}
                 for product in products:
                     for variant in product.get("variants", []):
-                        # Upsert by shopify_variant_id
-                        from sqlalchemy import select
-                        stmt = select(SKU).where(
-                            SKU.merchant_id == merchant_id,
-                            SKU.shopify_variant_id == str(variant["id"]),
-                        )
-                        existing = (await session.execute(stmt)).scalar_one_or_none()
+                        vid = str(variant["id"])
+                        variants_by_id[vid] = variant
+                        product_by_variant[vid] = product
 
-                        if existing is None:
-                            sku = SKU(
-                                merchant_id=merchant_id,
-                                title=f"{product['title']} — {variant.get('title', '')}".strip(" — "),
-                                handle=product.get("handle"),
-                                current_price=variant.get("price"),
-                                shopify_variant_id=str(variant["id"]),
-                            )
-                            session.add(sku)
-                            imported += 1
-                        else:
-                            # Refresh price from Shopify
-                            existing.current_price = variant.get("price")
+                existing_by_vid: dict[str, SKU] = {}
+                if variants_by_id:
+                    rows = (await session.execute(
+                        select(SKU).where(
+                            SKU.merchant_id == merchant_id,
+                            SKU.shopify_variant_id.in_(list(variants_by_id.keys())),
+                        )
+                    )).scalars().all()
+                    existing_by_vid = {s.shopify_variant_id: s for s in rows}
+
+                for vid, variant in variants_by_id.items():
+                    existing = existing_by_vid.get(vid)
+                    if existing is None:
+                        product = product_by_variant[vid]
+                        sku = SKU(
+                            merchant_id=merchant_id,
+                            title=f"{product['title']} — {variant.get('title', '')}".strip(" — "),
+                            handle=product.get("handle"),
+                            current_price=variant.get("price"),
+                            shopify_variant_id=vid,
+                        )
+                        session.add(sku)
+                        imported += 1
+                    else:
+                        # Refresh price from Shopify
+                        existing.current_price = variant.get("price")
 
                 # Pagination
                 link_header = resp.headers.get("Link", "")
@@ -272,12 +336,15 @@ async def shopify_oauth_begin(
         raise HTTPException(500, detail={"error": "config_error",
                                          "message": "Shopify OAuth is not configured"})
 
-    nonce = uuid.uuid4().hex
+    if not _is_valid_shop_domain(shop):
+        raise HTTPException(400, detail={"error": "invalid_shop",
+                                         "message": "shop must be a <store>.myshopify.com domain"})
+
     params = {
         "client_id":    _SHOPIFY_API_KEY,
         "scope":        _SCOPES,
         "redirect_uri": _REDIRECT_URI,
-        "state":        nonce,
+        "state":        _issue_oauth_state(merchant.id),
     }
     url = f"https://{shop}/admin/oauth/authorize?{urlencode(params)}"
     return RedirectResponse(url, status_code=status.HTTP_302_FOUND)
@@ -297,6 +364,13 @@ async def shopify_oauth_callback(
     Exchange OAuth code for access token, store encrypted, trigger SKU import.
     Returns a redirect to the dashboard (F1 AC#3).
     """
+    # Reject any non-myshopify.com `shop` BEFORE it reaches the token-exchange
+    # POST (which carries the app client_secret) or the Admin API import — see
+    # _SHOP_DOMAIN_RE. This is the primary guard against secret exfiltration/SSRF.
+    if not _is_valid_shop_domain(shop):
+        raise HTTPException(400, detail={"error": "invalid_shop",
+                                         "message": "shop must be a <store>.myshopify.com domain"})
+
     # Validate HMAC
     all_params = {k: v for k, v in {
         "code": code, "shop": shop, "hmac": hmac_value, **({"state": state} if state else {})
@@ -304,6 +378,12 @@ async def shopify_oauth_callback(
     if _SHOPIFY_API_SECRET and not _verify_shopify_hmac(all_params, hmac_value):
         raise HTTPException(400, detail={"error": "invalid_hmac",
                                          "message": "Shopify HMAC validation failed"})
+
+    # Verify the CSRF state we issued in /shopify/oauth — it must be signed by us
+    # and bound to THIS merchant. Blocks login-CSRF / store-binding attacks.
+    if not _verify_oauth_state(state, merchant.id):
+        raise HTTPException(400, detail={"error": "invalid_state",
+                                         "message": "OAuth state validation failed"})
 
     # Exchange code for access token
     async with httpx.AsyncClient(timeout=15.0) as client:

@@ -47,3 +47,42 @@ curl -fsS -X POST "$SPECTER_API_URL/internal/run-trial-monitor" \
 
 A `401` means the bearer token doesn't match `TRIAL_MONITOR_SECRET`; a `500
 config_error` means the secret isn't set on the API service.
+
+## Retention purge (required to cap storage cost)
+
+**Endpoint:** `POST /internal/run-retention-purge`
+**Auth:** `Authorization: Bearer ${TRIAL_MONITOR_SECRET}` (same cron secret)
+**Cadence:** daily (idempotent — only purges rows already past their cutoff).
+
+Deletes `price_snapshots` past their effective plan retention (30 days, or 90 for
+PREDATOR/ECLIPSE), plus any rows whose downgrade-grace `delete_at` has elapsed.
+
+**Without this scheduled, old snapshots accumulate indefinitely** — the retention
+*logic* never runs, so storage (and cost) grows without bound.
+
+```bash
+curl -fsS -X POST "$SPECTER_API_URL/internal/run-retention-purge" \
+  -H "Authorization: Bearer $TRIAL_MONITOR_SECRET"
+# → {"status":"ok","rows_deleted":N}
+```
+
+## Cost flush (daily billing rollup)
+
+**Endpoint:** `POST /internal/run-cost-flush`
+**Auth:** `Authorization: Bearer ${TRIAL_MONITOR_SECRET}` (same cron secret)
+**Cadence:** daily, after midnight UTC. Flushes YESTERDAY by default (pass
+`?day=YYYY-MM-DD` to flush a specific day). Idempotent — upserts, never double-adds.
+
+Rolls the day's best-effort Redis cost counters into the durable
+`merchant_cost_daily` table (the billing source of truth).
+
+```bash
+curl -fsS -X POST "$SPECTER_API_URL/internal/run-cost-flush" \
+  -H "Authorization: Bearer $TRIAL_MONITOR_SECRET"
+# → {"status":"ok","day":"2026-06-14","rows_upserted":N}
+```
+
+> One Railway cron service can drive all three jobs — add a line per job to its
+> command (or three schedules). They share `TRIAL_MONITOR_SECRET`. The standalone
+> `run_retention_purge.py` / `run_cost_flush.py` scripts remain available for
+> running a job directly on a worker without going through HTTP.

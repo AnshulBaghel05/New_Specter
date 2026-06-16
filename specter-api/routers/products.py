@@ -108,6 +108,13 @@ def assemble_products(
         for t in trackings_by_product.get(sku.id, []):
             url = url_by_id.get(t.competitor_url_id)
             snap = snapshot_by_url.get(t.competitor_url_id)
+            # Freshness reflects the last actual CHECK (per-URL last_scraped_at,
+            # maintained at dispatch), so it stays accurate when an unchanged
+            # scrape is skip-written (no new snapshot row). Fall back to the
+            # latest snapshot's scraped_at when the URL has no recorded check yet.
+            last_checked = getattr(url, "last_scraped_at", None) if url else None
+            if last_checked is None and snap is not None:
+                last_checked = snap.scraped_at
             rows.append(CompetitorRow(
                 tracking_id=t.id,
                 competitor_url_id=t.competitor_url_id,
@@ -118,7 +125,7 @@ def assemble_products(
                 robots_blocked=url.robots_blocked if url else False,
                 latest_price=snap.price if snap else None,
                 in_stock=snap.in_stock if snap else None,
-                last_checked_at=snap.scraped_at.isoformat() if snap else None,
+                last_checked_at=last_checked.isoformat() if last_checked else None,
             ))
         sig = signal_by_sku.get(sku.id)
         latest = LatestSignal(
@@ -178,27 +185,33 @@ async def list_products(
         )).scalars().all():
             url_by_id[u.id] = u
 
-    # 4. Latest snapshot per URL (newest scraped_at wins)
+    # 4. Latest snapshot per URL (newest scraped_at wins).
+    #    DISTINCT ON keeps ONE row per URL in the DB so this fetches at most
+    #    one snapshot per tracked URL — not the entire (unbounded, ever-growing)
+    #    price_snapshots history, which would make this read scale with retention.
     snapshot_by_url: dict[uuid.UUID, PriceSnapshot] = {}
     if url_ids:
         snaps = (await session.execute(
             select(PriceSnapshot)
             .where(PriceSnapshot.competitor_url_id.in_(url_ids))
-            .order_by(PriceSnapshot.scraped_at.desc())
+            .order_by(PriceSnapshot.competitor_url_id, PriceSnapshot.scraped_at.desc())
+            .distinct(PriceSnapshot.competitor_url_id)
         )).scalars().all()
         for s in snaps:
-            snapshot_by_url.setdefault(s.competitor_url_id, s)  # first = newest
+            snapshot_by_url.setdefault(s.competitor_url_id, s)  # one row per URL = newest
 
-    # 5. Latest signal per product (newest created_at wins)
+    # 5. Latest signal per product (newest created_at wins). DISTINCT ON bounds
+    #    this to one signal per SKU instead of the full signals history.
     signal_by_sku: dict[uuid.UUID, Signal] = {}
     if sku_ids:
         sigs = (await session.execute(
             select(Signal)
             .where(Signal.sku_id.in_(sku_ids))
-            .order_by(Signal.created_at.desc())
+            .order_by(Signal.sku_id, Signal.created_at.desc())
+            .distinct(Signal.sku_id)
         )).scalars().all()
         for sig in sigs:
-            signal_by_sku.setdefault(sig.sku_id, sig)  # first = newest
+            signal_by_sku.setdefault(sig.sku_id, sig)  # one row per SKU = newest
 
     # 6. SKU usage = enabled tracking count
     sku_used = (await session.execute(

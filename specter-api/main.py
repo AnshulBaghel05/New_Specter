@@ -9,7 +9,7 @@ from slowapi.middleware import SlowAPIMiddleware
 
 from observability import init_sentry
 from rate_limit import limiter
-from routers import merchants, skus, competitors, signals, alerts, repricing, attribution, products, calculations, billing, internal, cost, cron, health
+from routers import merchants, skus, competitors, signals, alerts, repricing, attribution, products, calculations, billing, internal, cost, cron, health, scrape_health
 
 # Initialise error tracking before the app is built so import-time/startup errors
 # are captured. No-ops without sentry-sdk + SENTRY_DSN (see observability.py).
@@ -58,5 +58,6 @@ app.include_router(calculations.router)
 app.include_router(billing.router)
 app.include_router(internal.router)
 app.include_router(cost.router)
+app.include_router(scrape_health.router)
 app.include_router(cron.router)
 app.include_router(health.router)

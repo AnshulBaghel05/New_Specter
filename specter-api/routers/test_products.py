@@ -110,6 +110,32 @@ def test_assemble_manual_source_and_missing_snapshot_and_signal():
     assert c.robots_blocked is True
 
 
+def test_last_checked_at_prefers_url_last_scraped_at_over_snapshot():
+    """Freshness comes from the URL's last_scraped_at (last actual check), so it
+    stays current even when an unchanged scrape is skip-written and the latest
+    stored snapshot is older. Falls back to snapshot.scraped_at only when the URL
+    has no recorded check."""
+    p_id = uuid.uuid4(); url_id = uuid.uuid4(); tr_id = uuid.uuid4()
+    sku = _ns(id=p_id, title="X", handle=None, current_price=Decimal("10"),
+              shopify_variant_id=None, active=True, floor_price=None, ceiling_price=None)
+    tracking = _ns(id=tr_id, own_product_id=p_id, competitor_url_id=url_id,
+                   enabled=True, silenced_oos=False)
+    # URL last checked just now; latest stored snapshot is a week old (unchanged since).
+    url = _ns(domain="a.com", url_path="/p", robots_blocked=False,
+              last_scraped_at=datetime(2026, 6, 15, 12, 0, tzinfo=timezone.utc))
+    snap = _ns(price=Decimal("10"), in_stock=True,
+               scraped_at=datetime(2026, 6, 8, 12, 0, tzinfo=timezone.utc))
+
+    out = assemble_products(
+        skus=[sku], trackings=[tracking],
+        url_by_id={url_id: url}, snapshot_by_url={url_id: snap},
+        signal_by_sku={}, sku_used=1, sku_limit=100, max_competitors_per_sku=3,
+    )
+    c = out.items[0].competitors[0]
+    # The recent URL check wins over the stale snapshot timestamp.
+    assert c.last_checked_at == "2026-06-15T12:00:00+00:00"
+
+
 # ── Route smoke test ─────────────────────────────────────────────────────────
 
 def _merchant(plan="recon"):

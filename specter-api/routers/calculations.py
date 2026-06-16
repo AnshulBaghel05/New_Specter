@@ -20,7 +20,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth.supabase import get_current_merchant
@@ -29,6 +29,13 @@ from models.merchants import Merchant
 from models.tool_calculations import ToolCalculation
 
 router = APIRouter(prefix="/calculations", tags=["calculations"])
+
+# Hard ceiling on saved calculations per merchant. This surface is open to every
+# plan (incl. `free`), so without a cap a single account could write unbounded
+# rows — a cheap storage/DoS abuse vector at scale. The limit is generous enough
+# that a real Workspace user never hits it; archived rows still count (they're
+# the same storage). Soft-delete or delete to free room.
+MAX_CALCULATIONS_PER_MERCHANT = 500
 
 
 # ── Schemas ──────────────────────────────────────────────────────────────────
@@ -115,6 +122,17 @@ async def create_calculation(
     merchant: Merchant = Depends(get_current_merchant),
     session: AsyncSession = Depends(get_db),
 ) -> CalculationOut:
+    count = (await session.execute(
+        select(func.count()).where(ToolCalculation.merchant_id == merchant.id)
+    )).scalar_one()
+    if count >= MAX_CALCULATIONS_PER_MERCHANT:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error": "calculation_limit_reached",
+                    "message": f"You can save up to {MAX_CALCULATIONS_PER_MERCHANT} "
+                               "calculations. Delete some to make room."},
+        )
+
     calc = ToolCalculation(
         merchant_id=merchant.id,
         tool_name=body.tool_name,

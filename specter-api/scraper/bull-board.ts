@@ -4,6 +4,7 @@ import { createBullBoard } from '@bull-board/api'
 import { BullMQAdapter } from '@bull-board/api/bullMQAdapter'
 import { ExpressAdapter } from '@bull-board/express'
 import { basicAuth } from './bull-board-auth'
+import { fetchScrapeHealth, renderScrapeHealthHtml } from './scrape-health-view'
 import {
   probeQueue,
   httpQueue,
@@ -25,6 +26,10 @@ import {
  * and a hard 500 if the env vars aren't set so the board can never come up open.
  */
 const BASE_PATH = '/ops/queues'
+// Sibling ops page: the scrape-health report (parser/crawl/blocked/failed rates
+// + per-domain health). Fetches specter-api's admin endpoint server-side using
+// SPECTER_API_URL + ADMIN_API_KEY, behind the same Basic-Auth guard.
+const SCRAPE_HEALTH_PATH = '/ops/scrape-health'
 
 export function createBullBoardApp(): express.Express {
   const serverAdapter = new ExpressAdapter()
@@ -51,6 +56,21 @@ export function createBullBoardApp(): express.Express {
   app.get('/health', (_req: Request, res: Response) => {
     res.json({ status: 'ok' })
   })
+  // Scrape-health report page (same Basic-Auth guard as the queues board).
+  app.get(SCRAPE_HEALTH_PATH, basicAuth, (_req: Request, res: Response) => {
+    void (async () => {
+      try {
+        const report = await fetchScrapeHealth(process.env)
+        res.type('html').send(renderScrapeHealthHtml(report as Parameters<typeof renderScrapeHealthHtml>[0]))
+      } catch (err) {
+        // Never expose the admin key or a stack — just the upstream status.
+        res.status(502).type('html').send(
+          `<h1>Scrape health unavailable</h1><p>${(err as Error).message}</p>`,
+        )
+      }
+    })()
+  })
+
   app.use(BASE_PATH, basicAuth, serverAdapter.getRouter())
   return app
 }

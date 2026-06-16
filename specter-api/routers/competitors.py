@@ -28,7 +28,7 @@ from urllib.parse import urlparse
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, field_validator
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth.plan_gate import competitor_limit_for, plan_max_skus
@@ -82,6 +82,17 @@ router = APIRouter(prefix="/competitors", tags=["competitors"])
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _merchant_lock_key(merchant_id: uuid.UUID) -> int:
+    """Stable signed 64-bit key for pg_advisory_xact_lock from a merchant UUID.
+
+    The lock serializes a merchant's concurrent `add_competitor` calls so the
+    SKU/competitor count→insert is atomic — without it two parallel POSTs both
+    read `used < limit` and overshoot the plan ceiling (an unpaid scrape-cost
+    leak). The lock is transaction-scoped (auto-released on commit/rollback).
+    """
+    return int.from_bytes(merchant_id.bytes[:8], "big", signed=True)
+
 
 def _parse_url(raw_url: str) -> tuple[str, str]:
     """Return (domain, url_path) from a URL string."""
@@ -182,6 +193,14 @@ async def add_competitor(
     sku = await session.get(SKU, body.own_product_id)
     if sku is None or sku.merchant_id != merchant.id:
         raise HTTPException(404, detail={"error": "product_not_found"})
+
+    # 1b. Serialize concurrent adds for THIS merchant so the limit count→insert
+    #     below is atomic (transaction-scoped advisory lock; see _merchant_lock_key).
+    #     Held until this request's commit/rollback.
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(:k)"),
+        {"k": _merchant_lock_key(merchant.id)},
+    )
 
     # 2. Total SKU (tracking) limit
     plan_limit = plan_max_skus(merchant.plan)

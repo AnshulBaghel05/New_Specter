@@ -52,6 +52,7 @@ def test_valid_signature_accepted_real_hmac():
     internal._upsert_snapshot = AsyncMock(return_value=uuid.uuid4())
     internal.dispatch_on_snapshot = AsyncMock()
     internal.generate_cycle_signals = AsyncMock()
+    internal._last_values = AsyncMock(return_value={})  # skip-write on by default: no priors → nothing unchanged
     try:
         with TestClient(app) as c:
             r = _signed(c, "/internal/price-snapshot", {
@@ -80,6 +81,7 @@ def test_batch_dedupes_on_job_uuid_and_skips_side_effects():
     internal._bulk_upsert_snapshots = bulk
     internal.dispatch_on_snapshot = AsyncMock()
     internal.generate_cycle_signals = AsyncMock()
+    internal._last_values = AsyncMock(return_value={})  # skip-write on by default: no priors → nothing unchanged
 
     item = {"domain": "d.com", "url_path": "/p", "price": 5, "in_stock": True, "job_uuid": job}
     try:
@@ -110,6 +112,7 @@ def test_batch_bulk_inserts_distinct_items_in_one_statement():
     internal._bulk_upsert_snapshots = bulk
     internal.dispatch_on_snapshot = AsyncMock()
     internal.generate_cycle_signals = AsyncMock()
+    internal._last_values = AsyncMock(return_value={})  # skip-write on by default: no priors → nothing unchanged
 
     items = [
         {"domain": "d.com", "url_path": f"/p{i}", "price": 5 + i, "in_stock": True, "job_uuid": str(j)}
@@ -137,6 +140,7 @@ def test_scrape_failed_advances_cycle(monkeypatch):
     monkeypatch.setattr(internal.cycle_coordinator, "record_scrape", rec)
     internal._write_audit = AsyncMock()
     internal.generate_cycle_signals = AsyncMock()
+    internal._last_values = AsyncMock(return_value={})  # skip-write on by default: no priors → nothing unchanged
 
     merchant_id = str(uuid.uuid4())
     try:
@@ -169,6 +173,7 @@ def test_excluded_domain_short_circuits_with_audit():
     internal._bulk_upsert_snapshots = AsyncMock(return_value={j: uuid.uuid4()})
     internal.dispatch_on_snapshot = AsyncMock()
     internal.generate_cycle_signals = AsyncMock()
+    internal._last_values = AsyncMock(return_value={})  # skip-write on by default: no priors → nothing unchanged
 
     items = [
         {"domain": "blocked.com", "url_path": "/p", "price": 9, "in_stock": True, "job_uuid": str(uuid.uuid4())},

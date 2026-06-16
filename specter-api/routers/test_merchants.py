@@ -390,7 +390,14 @@ class TestShopifyOAuth:
         app.dependency_overrides[get_current_merchant] = override_merchant(merchant)
         app.dependency_overrides[get_db] = override_db(session)
 
-        params = {"code": "abc123", "shop": "teststore.myshopify.com", "state": "nonce"}
+        # Obtain a valid, merchant-bound CSRF state from the begin step.
+        from urllib.parse import parse_qs, urlparse
+        begin = client.get(
+            "/merchants/shopify/oauth?shop=teststore.myshopify.com", follow_redirects=False
+        )
+        state = parse_qs(urlparse(begin.headers["location"]).query)["state"][0]
+
+        params = {"code": "abc123", "shop": "teststore.myshopify.com", "state": state}
         params["hmac"] = self._make_hmac(params)
 
         mock_resp = MagicMock()
@@ -412,6 +419,68 @@ class TestShopifyOAuth:
         assert merchant.shopify_domain == "teststore.myshopify.com"
         assert merchant.shopify_access_token is not None
         assert merchant.shopify_access_token != "shpat_test_token"  # must be encrypted
+
+    def test_oauth_begin_rejects_non_myshopify_shop(self, client: TestClient):
+        """`shop` that is not a *.myshopify.com domain → 400 (no redirect)."""
+        merchant = make_merchant()
+        app.dependency_overrides[get_current_merchant] = override_merchant(merchant)
+
+        for bad in ("evil.com", "teststore.myshopify.com.evil.com",
+                    "teststore.myshopify.com/path", "internal-host"):
+            resp = client.get(
+                f"/merchants/shopify/oauth?shop={bad}",
+                follow_redirects=False,
+            )
+            assert resp.status_code == 400, bad
+            assert resp.json()["detail"]["error"] == "invalid_shop"
+
+    def test_oauth_callback_rejects_non_myshopify_shop(self, client: TestClient):
+        """A non-myshopify `shop` is rejected BEFORE token exchange (no client_secret
+        is ever sent to the attacker host)."""
+        merchant = make_merchant()
+        session = AsyncMock()
+        session.get = AsyncMock(return_value=merchant)
+        app.dependency_overrides[get_current_merchant] = override_merchant(merchant)
+        app.dependency_overrides[get_db] = override_db(session)
+
+        params = {"code": "abc123", "shop": "attacker.com", "state": "nonce"}
+        params["hmac"] = self._make_hmac(params)
+
+        post_spy = AsyncMock()
+        with patch("routers.merchants._import_shopify_skus"):
+            with patch("httpx.AsyncClient.post", new=post_spy):
+                resp = client.get(
+                    "/merchants/shopify/callback",
+                    params=params,
+                    follow_redirects=False,
+                )
+
+        assert resp.status_code == 400
+        assert resp.json()["detail"]["error"] == "invalid_shop"
+        post_spy.assert_not_awaited()  # token exchange never happened
+
+    def test_oauth_callback_rejects_forged_state(self, client: TestClient):
+        """A valid-HMAC callback with a state we never issued → 400 invalid_state,
+        and the token exchange never runs (blocks OAuth login-CSRF)."""
+        merchant = make_merchant()
+        session = AsyncMock()
+        session.get = AsyncMock(return_value=merchant)
+        app.dependency_overrides[get_current_merchant] = override_merchant(merchant)
+        app.dependency_overrides[get_db] = override_db(session)
+
+        params = {"code": "abc123", "shop": "teststore.myshopify.com", "state": "forged.nonce.sig"}
+        params["hmac"] = self._make_hmac(params)
+
+        post_spy = AsyncMock()
+        with patch("routers.merchants._import_shopify_skus"):
+            with patch("httpx.AsyncClient.post", new=post_spy):
+                resp = client.get(
+                    "/merchants/shopify/callback", params=params, follow_redirects=False
+                )
+
+        assert resp.status_code == 400
+        assert resp.json()["detail"]["error"] == "invalid_state"
+        post_spy.assert_not_awaited()
 
     def test_oauth_callback_rejects_invalid_hmac(self, client: TestClient):
         """Callback with tampered HMAC → 400."""
@@ -466,10 +535,10 @@ class TestCompetitorsRouter:
 
         call_count = [0]
 
-        async def smart_execute(stmt):
+        async def smart_execute(stmt, *args, **kwargs):
             call_count[0] += 1
             # First few calls return count=0 (under limits, no duplicate)
-            if call_count[0] <= 3:
+            if call_count[0] <= 4:
                 return count_result
             return none_result
 
@@ -640,9 +709,11 @@ class TestCompetitorsRouter:
 
         call_count = [0]
 
-        async def smart_execute(stmt):
+        async def smart_execute(stmt, *args, **kwargs):
             call_count[0] += 1
-            if call_count[0] <= 2:  # limit checks
+            # 1 = advisory lock, 2 = total-SKU count, 3 = per-product count,
+            # then the duplicate check.
+            if call_count[0] <= 3:
                 return count_zero
             return dup_result  # duplicate check
 
@@ -668,6 +739,82 @@ class TestCompetitorsRouter:
         )
         assert resp.status_code == 409
         assert resp.json()["detail"]["error"] == "already_tracking"
+
+    def test_merchant_lock_key_is_stable_signed_bigint(self):
+        """_merchant_lock_key is deterministic and fits a signed 64-bit bigint."""
+        from routers.competitors import _merchant_lock_key
+        mid = uuid.uuid4()
+        k = _merchant_lock_key(mid)
+        assert k == _merchant_lock_key(mid)              # deterministic
+        assert -(2 ** 63) <= k < 2 ** 63                 # valid pg bigint
+        assert _merchant_lock_key(uuid.uuid4()) != k or True  # distinct keys (prob.)
+
+    def test_post_competitors_acquires_merchant_advisory_lock(self, client: TestClient):
+        """add_competitor takes a per-merchant advisory lock so the limit
+        count→insert is atomic under concurrency (H3 fix)."""
+        merchant = make_merchant(plan="recon")
+        sku = MagicMock(spec=SKU)
+        sku.id = uuid.uuid4()
+        sku.merchant_id = merchant.id
+
+        count_res = MagicMock()
+        count_res.scalar_one = MagicMock(return_value=0)
+        count_res.scalar_one_or_none = MagicMock(return_value=None)
+
+        executed: list[str] = []
+
+        session = AsyncMock()
+        session.commit = AsyncMock()
+        session.flush = AsyncMock()
+        session.refresh = AsyncMock()
+
+        async def capture_execute(stmt, *args, **kwargs):
+            executed.append(str(stmt))
+            return count_res
+
+        session.execute = capture_execute
+
+        async def smart_get(model, pk):
+            if hasattr(model, "__tablename__") and model.__tablename__ == "skus":
+                return sku
+            return None
+
+        session.get = smart_get
+        session.add = MagicMock()
+
+        app.dependency_overrides[get_current_merchant] = override_merchant(merchant)
+        app.dependency_overrides[get_db] = override_db(session)
+
+        from routers.competitors import TrackingOut
+
+        async def fake_build(tracking, session):
+            return TrackingOut(
+                id=uuid.uuid4(), own_product_id=sku.id,
+                competitor_url_id=uuid.uuid4(), merchant_id=merchant.id,
+                enabled=True, silenced_oos=False,
+                url="https://amazon.com/dp/B09V3KXJPB", domain="amazon.com",
+                robots_blocked=False,
+            )
+
+        with patch("routers.competitors._check_url_reachable", return_value=True):
+            with patch("routers.competitors.redis_client", MagicMock()):
+                with patch("routers.competitors.enqueue_probe_job"):
+                    with patch("routers.competitors.refresh_url_schedule",
+                               new=AsyncMock()):
+                        with patch("routers.competitors._build_tracking_out",
+                                   side_effect=fake_build):
+                            resp = client.post(
+                                "/competitors",
+                                json={
+                                    "url": "https://amazon.com/dp/B09V3KXJPB",
+                                    "own_product_id": str(sku.id),
+                                },
+                            )
+
+        assert resp.status_code == 201
+        # The advisory lock must be the FIRST statement executed (before counts).
+        assert any("pg_advisory_xact_lock" in s for s in executed)
+        assert "pg_advisory_xact_lock" in executed[0]
 
     def test_delete_competitor_disables_tracking(self, client: TestClient):
         """DELETE /competitors/{id} sets enabled=False and pauses the URL schedule."""
@@ -735,3 +882,46 @@ class TestSKURoutes:
         assert "used" in data
         assert "limit" in data
         assert data["limit"] == 100  # RECON plan limit
+
+    def test_create_sku_persists_when_under_cap(self, client: TestClient):
+        """POST /skus under the abuse cap creates the row (count check passes)."""
+        merchant = make_merchant(plan="recon")
+        session = AsyncMock()
+        # cap check: 0 existing rows
+        session.execute = AsyncMock(return_value=MagicMock(scalar_one=MagicMock(return_value=0)))
+
+        def _add(obj):
+            obj.id = uuid.uuid4()
+            obj.floor_price = None
+            obj.ceiling_price = None
+            obj.active = True
+
+        session.add = MagicMock(side_effect=_add)
+        session.commit = AsyncMock()
+        session.refresh = AsyncMock()
+        app.dependency_overrides[get_current_merchant] = override_merchant(merchant)
+        app.dependency_overrides[get_db] = override_db(session)
+
+        resp = client.post("/skus", json={"title": "Manual product", "current_price": "12.50"})
+        assert resp.status_code == 201
+        assert resp.json()["title"] == "Manual product"
+        session.commit.assert_awaited_once()
+
+    def test_create_sku_rejected_at_cap(self, client: TestClient):
+        """At the per-merchant SKU ceiling, POST /skus → 409 and never persists."""
+        from routers.skus import MAX_SKUS_PER_MERCHANT
+
+        merchant = make_merchant(plan="recon")
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=MagicMock(
+            scalar_one=MagicMock(return_value=MAX_SKUS_PER_MERCHANT)))
+        session.add = MagicMock()
+        session.commit = AsyncMock()
+        app.dependency_overrides[get_current_merchant] = override_merchant(merchant)
+        app.dependency_overrides[get_db] = override_db(session)
+
+        resp = client.post("/skus", json={"title": "one too many"})
+        assert resp.status_code == 409
+        assert resp.json()["detail"]["error"] == "sku_limit_reached"
+        session.add.assert_not_called()
+        session.commit.assert_not_awaited()

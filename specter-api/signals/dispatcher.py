@@ -122,20 +122,29 @@ async def generate_cycle_signals(
     if not trackings:
         return
 
-    # Distinct affected own_products (dedup, preserve first-seen order).
-    own_product_ids: dict[uuid.UUID, None] = {}
+    # Group trackings by own_product (dedup products, preserve first-seen order).
+    trackings_by_product: dict[uuid.UUID, list[CompetitorTracking]] = {}
     for t in trackings:
-        own_product_ids[t.own_product_id] = None
+        trackings_by_product.setdefault(t.own_product_id, []).append(t)
+
+    # Batch-load every referenced URL + its latest snapshot ONCE for the whole
+    # merchant, so per-product data assembly is pure dict lookups. Previously
+    # _build_data_points re-queried trackings and ran a snapshot + URL query per
+    # tracking — an N+1 issuing O(products × competitors) queries per cycle,
+    # which hammered Postgres as merchants and catalogs grew.
+    url_ids = list({t.competitor_url_id for t in trackings})
+    url_by_id = await _load_urls(session, url_ids)
+    snap_by_url = await _load_latest_snapshots(session, url_ids)
 
     plan = (merchant.plan or "recon").lower()
     eclipse_interval_s = (merchant.eclipse_interval_ms or 300_000) // 1_000
 
     skus_and_data: list[tuple[SKU, list[CompetitorDataPoint]]] = []
-    for own_product_id in own_product_ids:
+    for own_product_id, product_trackings in trackings_by_product.items():
         sku = await session.get(SKU, own_product_id)
         if not sku or not sku.active or not sku.current_price or sku.current_price <= 0:
             continue
-        data_points = await _build_data_points(session, own_product_id, "unknown")
+        data_points = await _build_data_points(product_trackings, url_by_id, snap_by_url)
         if data_points:
             skus_and_data.append((sku, data_points))
 
@@ -166,30 +175,62 @@ async def generate_cycle_signals(
 
 # ── Data assembly helpers ─────────────────────────────────────────────────────
 
-async def _build_data_points(
+async def _load_urls(
     session: AsyncSession,
-    own_product_id: uuid.UUID,
-    triggering_domain: str,
+    url_ids: list[uuid.UUID],
+) -> dict[uuid.UUID, CompetitorURL]:
+    """All CompetitorURLs for the given ids in ONE query, keyed by id."""
+    if not url_ids:
+        return {}
+    rows = (await session.execute(
+        select(CompetitorURL).where(CompetitorURL.id.in_(url_ids))
+    )).scalars().all()
+    return {u.id: u for u in rows}
+
+
+async def _load_latest_snapshots(
+    session: AsyncSession,
+    url_ids: list[uuid.UUID],
+) -> dict[uuid.UUID, PriceSnapshot]:
+    """Latest price_snapshot per URL in ONE query (DISTINCT ON), keyed by URL id.
+
+    Replaces a per-URL `ORDER BY scraped_at DESC LIMIT 1` query; one round-trip
+    bounded to one row per URL regardless of how much history a URL has.
+    """
+    if not url_ids:
+        return {}
+    rows = (await session.execute(
+        select(PriceSnapshot)
+        .where(PriceSnapshot.competitor_url_id.in_(url_ids))
+        .order_by(PriceSnapshot.competitor_url_id, PriceSnapshot.scraped_at.desc())
+        .distinct(PriceSnapshot.competitor_url_id)
+    )).scalars().all()
+    return {s.competitor_url_id: s for s in rows}
+
+
+async def _build_data_points(
+    product_trackings: list[CompetitorTracking],
+    url_by_id: dict[uuid.UUID, CompetitorURL],
+    snap_by_url: dict[uuid.UUID, PriceSnapshot],
+    triggering_domain: str = "unknown",
 ) -> list[CompetitorDataPoint]:
     """
-    Fetch the latest price_snapshot for every enabled tracking of an own_product.
-    Enriches CompetitorDataPoint with domain, competitor_url_id, and scraped_at
-    so the AI engine can build prompts and compute snapshot hashes.
-    """
-    all_trackings_stmt = select(CompetitorTracking).where(
-        CompetitorTracking.own_product_id == own_product_id,
-        CompetitorTracking.enabled.is_(True),
-    )
-    all_trackings = list((await session.execute(all_trackings_stmt)).scalars().all())
+    Build CompetitorDataPoints for one own_product from already-batch-loaded
+    lookups — no per-tracking queries.
 
+    `product_trackings` are the enabled trackings for the product; `url_by_id`
+    and `snap_by_url` cover every URL the merchant tracks (loaded once by the
+    caller). Trackings whose URL has no snapshot yet are skipped. Enriches each
+    point with domain, competitor_url_id, and scraped_at so the AI engine can
+    build prompts and compute snapshot hashes.
+    """
     data_points: list[CompetitorDataPoint] = []
-    for tracking in all_trackings:
-        snap = await _latest_snapshot(session, tracking.competitor_url_id)
+    for tracking in product_trackings:
+        snap = snap_by_url.get(tracking.competitor_url_id)
         if snap is None:
             continue
 
-        # Get domain for this tracking's URL
-        cu = await session.get(CompetitorURL, tracking.competitor_url_id)
+        cu = url_by_id.get(tracking.competitor_url_id)
         domain = cu.domain if cu else triggering_domain
 
         data_points.append(CompetitorDataPoint(
@@ -203,19 +244,6 @@ async def _build_data_points(
         ))
 
     return data_points
-
-
-async def _latest_snapshot(
-    session: AsyncSession,
-    competitor_url_id: uuid.UUID,
-) -> Optional[PriceSnapshot]:
-    stmt = (
-        select(PriceSnapshot)
-        .where(PriceSnapshot.competitor_url_id == competitor_url_id)
-        .order_by(PriceSnapshot.scraped_at.desc())
-        .limit(1)
-    )
-    return (await session.execute(stmt)).scalar_one_or_none()
 
 
 async def _write_signal(
