@@ -13,7 +13,7 @@ import uuid
 from decimal import Decimal
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, PlainSerializer
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -75,9 +75,17 @@ class ProductOut(BaseModel):
 
 class ProductsOut(BaseModel):
     items: list[ProductOut]
+    total: int                     # total products for the merchant (for pagination)
     sku_used: int
     sku_limit: Optional[int]
     max_competitors_per_sku: Optional[int]
+
+
+# Max products returned in one page. 2000 = the largest self-serve plan SKU ceiling
+# (PREDATOR), so every self-serve merchant still gets their whole catalog in one
+# call. It only caps ECLIPSE (unlimited SKUs), bounding the response size and the
+# IN() lists below so this read never scales without limit. Use offset for the rest.
+PRODUCTS_PAGE_MAX = 2000
 
 
 # ── Pure builder (unit-tested without a DB) ──────────────────────────────────
@@ -89,6 +97,7 @@ def assemble_products(
     url_by_id,
     snapshot_by_url,
     signal_by_sku,
+    total: int,
     sku_used: int,
     sku_limit: Optional[int],
     max_competitors_per_sku: Optional[int],
@@ -149,6 +158,7 @@ def assemble_products(
         ))
     return ProductsOut(
         items=items,
+        total=total,
         sku_used=sku_used,
         sku_limit=sku_limit,
         max_competitors_per_sku=max_competitors_per_sku,
@@ -159,22 +169,36 @@ def assemble_products(
 
 @router.get("", response_model=ProductsOut)
 async def list_products(
+    limit: int = Query(PRODUCTS_PAGE_MAX, ge=1, le=PRODUCTS_PAGE_MAX),
+    offset: int = Query(0, ge=0),
     merchant: Merchant = Depends(get_current_merchant),
     session: AsyncSession = Depends(get_db),
 ) -> ProductsOut:
-    # 1. Products
+    # 0. Total product count (for pagination); bounds nothing else.
+    total = (await session.execute(
+        select(func.count()).where(SKU.merchant_id == merchant.id)
+    )).scalar_one()
+
+    # 1. Products — ONE page only. Capped so an ECLIPSE (unlimited-SKU) catalog
+    #    can't make this read — and the IN() lists below — grow without bound.
     skus = list((await session.execute(
-        select(SKU).where(SKU.merchant_id == merchant.id).order_by(SKU.created_at.desc())
+        select(SKU)
+        .where(SKU.merchant_id == merchant.id)
+        .order_by(SKU.created_at.desc())
+        .limit(limit)
+        .offset(offset)
     )).scalars().all())
     sku_ids = [s.id for s in skus]
 
-    # 2. Enabled trackings for this merchant
+    # 2. Enabled trackings for THIS PAGE's products only (bounds the fan-out so a
+    #    large catalog never loads every tracking at once).
     trackings = list((await session.execute(
         select(CompetitorTracking).where(
             CompetitorTracking.merchant_id == merchant.id,
             CompetitorTracking.enabled.is_(True),
+            CompetitorTracking.own_product_id.in_(sku_ids),
         )
-    )).scalars().all())
+    )).scalars().all()) if sku_ids else []
 
     # 3. Competitor URLs referenced
     url_ids = list({t.competitor_url_id for t in trackings})
@@ -227,6 +251,7 @@ async def list_products(
         url_by_id=url_by_id,
         snapshot_by_url=snapshot_by_url,
         signal_by_sku=signal_by_sku,
+        total=total,
         sku_used=sku_used,
         sku_limit=plan_max_skus(merchant.plan),
         max_competitors_per_sku=competitor_limit_for(merchant.plan, merchant.max_competitors_per_sku),

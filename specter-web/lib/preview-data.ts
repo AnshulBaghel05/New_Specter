@@ -72,6 +72,7 @@ export const previewProducts: Product[] = []
 
 export const previewProductsResponse: ProductsResponse = {
   items: previewProducts,
+  total: previewProducts.length,
   sku_used: 0,
   sku_limit: SKU_LIMIT,
   max_competitors_per_sku: MAX_COMPETITORS_PER_SKU,

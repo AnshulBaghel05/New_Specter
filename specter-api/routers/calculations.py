@@ -15,7 +15,7 @@ JSON blobs — this surface does not interpret them.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -175,7 +175,10 @@ async def update_calculation(
     if body.currency is not None:
         calc.currency = body.currency
     if body.archived is not None:
-        calc.archived_at = datetime.now() if body.archived else None
+        # tz-aware UTC: archived_at is a timestamptz column; a naive datetime.now()
+        # would store local wall-clock as UTC (off by the server's tz offset) and
+        # asyncpg may reject it outright.
+        calc.archived_at = datetime.now(timezone.utc) if body.archived else None
 
     await session.commit()
     await session.refresh(calc)

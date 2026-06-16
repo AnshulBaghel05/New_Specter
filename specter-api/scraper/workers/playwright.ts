@@ -23,6 +23,7 @@ import { validateParseResult } from './validate'
 import { normaliseCurrency } from '../domains/generic'
 import { getParser } from '../domains/index'
 import { getProxyManager, selectProxy, allowDirectFallback } from '../proxy/runtime'
+import { unionBatchedTrackingIds } from '../batch-set'
 import type { ScrapeJob } from '../types'
 
 const CONTEXT_REFRESH_EVERY = 50  // relaunch LOCAL browser process every N jobs to prevent memory leaks
@@ -327,9 +328,15 @@ async function handleCaptcha(page: Page, domain: string): Promise<CaptchaOutcome
 const worker = new Worker<ScrapeJob>(
   'scrape:playwright',
   async (job: Job<ScrapeJob>) => {
-    const { url, domain, urlPath, competitorTrackingIds, plan } = job.data
+    const { url, domain, urlPath, plan } = job.data
     const priority = PLAN_PRIORITY[plan.toUpperCase()] ?? PLAN_PRIORITY.RECON
     const parser   = getParser(domain)
+
+    // Union any trackingIds batched onto this job after creation (atomic SADD set,
+    // see batch-set.ts) so one render serves every merchant tracking this URL.
+    const competitorTrackingIds = await unionBatchedTrackingIds(
+      redis, String(job.id), job.data.competitorTrackingIds,
+    )
 
     // ── 0. Crawl-delay (robots.txt politeness) — minimum spacing per domain ────
     const cd = await enforceCrawlDelay(domain, redis)

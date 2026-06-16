@@ -86,6 +86,12 @@ export default function ProductsPage() {
           <ul className="flex flex-col gap-2">
             {visible.map(p => <ProductRow key={p.id} product={p} maxCompetitors={data!.max_competitors_per_sku} />)}
           </ul>
+          {data.total > data.items.length && (
+            <p className="font-body text-xs text-muted text-center">
+              Showing the {data.items.length.toLocaleString()} most recent of {data.total.toLocaleString()} products.
+              Use search to find a specific one.
+            </p>
+          )}
         </>
       )}
     </div>
