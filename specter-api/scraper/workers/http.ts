@@ -11,6 +11,7 @@ import { postPriceSnapshot, postScrapeFailed, buildSnapshotBody } from '../lib/i
 import { cacheLastPrice, cacheDomainClass, recordPriceObservation } from '../state-ttl'
 import { getProxyManager, agentFor, selectProxy, allowDirectFallback, requeueDelayMs } from '../proxy/runtime'
 import { WORKER_RELIABILITY } from '../worker-options'
+import { unionBatchedTrackingIds } from '../batch-set'
 import type { ScrapeJob, ParseResult } from '../types'
 
 const HTTP_FAIL_LIMIT = 3  // consecutive parse failures before reclassifying
@@ -20,8 +21,16 @@ const HTTP_FAIL_LIMIT = 3  // consecutive parse failures before reclassifying
 const worker = new Worker<ScrapeJob>(
   'scrape:http',
   async (job: Job<ScrapeJob>) => {
-    const { url, domain, urlPath, competitorTrackingIds, plan } = job.data
+    const { url, domain, urlPath, plan } = job.data
     const priority = PLAN_PRIORITY[plan.toUpperCase()] ?? PLAN_PRIORITY.RECON
+
+    // Union any trackingIds batched onto this job AFTER it was created (atomic SADD
+    // set, see batch-set.ts) so one fetch still serves every merchant that piled
+    // onto this URL inside the lock window.
+    const competitorTrackingIds = await unionBatchedTrackingIds(
+      redis, String(job.id), job.data.competitorTrackingIds,
+    )
+    const batchedData: ScrapeJob = { ...job.data, competitorTrackingIds }
 
     // Detect Shopify stores for rate-limit tier selection.
     // We rely on the domain pattern; header-based detection happens after GET.
@@ -105,7 +114,7 @@ const worker = new Worker<ScrapeJob>(
     } catch (err) {
       // Network error — cool the proxy and count a parse failure for the http-fail counter.
       if (proxyMgr && proxyUrl) proxyMgr.reportResult(proxyUrl, 0)
-      await incrementHttpFailCounter(domain, job.data, priority)
+      await incrementHttpFailCounter(domain, batchedData, priority)
       throw err  // re-throw so BullMQ retries via exponential backoff
     }
 
@@ -137,7 +146,7 @@ const worker = new Worker<ScrapeJob>(
 
     if (parsed.price === null) {
       // Parse failed — increment failure counter, possibly reclassify.
-      await incrementHttpFailCounter(domain, job.data, priority)
+      await incrementHttpFailCounter(domain, batchedData, priority)
       // Not a job failure — caller logs to validation-errors queue.
       await validationErrorsQueue.add(`parse-null:${domain}`, {
         domain,

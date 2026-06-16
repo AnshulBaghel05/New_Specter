@@ -2,15 +2,13 @@
  * Proxy rotation manager — pure, deterministic, unit-testable with NO Redis
  * and NO network.
  *
- * DEFERRED (infra wave):
- *   - Redis-backed ProxyHealthStore adapter (key: `proxy:health:{ip}`)
- *     — slot in by implementing the ProxyHealthStore interface below.
- *   - Worker wiring: http.ts / probe.ts / playwright.ts source proxies from
- *     ProxyManager.next() and call reportResult() after each request.
- *   - ProxyAgent reuse: one undici ProxyAgent per IP, kept in a Map, so the
- *     per-job `new ProxyAgent(url)` in http.ts:53 is replaced.
- *   - process.env parsing: parse PROXY_DATACENTER_URLS / PROXY_RESIDENTIAL_URLS
- *     (comma-lists) at the worker entry point and pass into the constructor.
+ * Runtime wiring lives in ./runtime.ts: it parses PROXY_DATACENTER_URLS /
+ * PROXY_RESIDENTIAL_URLS, backs the health store with Redis
+ * (./redis-health-store.ts, key `proxy:health:{ip}`) so ban knowledge is shared
+ * across worker pods, and caches one undici ProxyAgent per IP. The http / probe /
+ * playwright workers source proxies via runtime.selectProxy() and feed outcomes
+ * back through reportResult(). This class stays pure so the rotation/cooldown
+ * logic is testable without any of that.
  *
  * The two injectable seams that make this unit-testable:
  *   1. ProxyHealthStore — synchronous get/set of per-IP health state.

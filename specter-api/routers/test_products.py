@@ -40,9 +40,10 @@ def test_assemble_groups_competitors_under_product_and_derives_source():
     out = assemble_products(
         skus=[sku], trackings=[tracking],
         url_by_id={url_id: url}, snapshot_by_url={url_id: snap},
-        signal_by_sku={p_id: sig}, sku_used=1, sku_limit=100, max_competitors_per_sku=3,
+        signal_by_sku={p_id: sig}, total=1, sku_used=1, sku_limit=100, max_competitors_per_sku=3,
     )
     assert out.sku_used == 1 and out.sku_limit == 100 and out.max_competitors_per_sku == 3
+    assert out.total == 1
     assert len(out.items) == 1
     item = out.items[0]
     assert item.source == "shopify"          # shopify_variant_id present
@@ -76,7 +77,7 @@ def test_decimal_fields_serialize_to_json_numbers_not_strings():
     out = assemble_products(
         skus=[sku], trackings=[tracking],
         url_by_id={url_id: url}, snapshot_by_url={url_id: snap},
-        signal_by_sku={p_id: sig}, sku_used=1, sku_limit=100, max_competitors_per_sku=3,
+        signal_by_sku={p_id: sig}, total=1, sku_used=1, sku_limit=100, max_competitors_per_sku=3,
     )
     import json
     body = json.loads(out.model_dump_json())
@@ -100,7 +101,7 @@ def test_assemble_manual_source_and_missing_snapshot_and_signal():
     out = assemble_products(
         skus=[sku], trackings=[tracking],
         url_by_id={url_id: url}, snapshot_by_url={}, signal_by_sku={},
-        sku_used=1, sku_limit=None, max_competitors_per_sku=None,
+        total=1, sku_used=1, sku_limit=None, max_competitors_per_sku=None,
     )
     item = out.items[0]
     assert item.source == "manual"            # no shopify_variant_id
@@ -129,7 +130,7 @@ def test_last_checked_at_prefers_url_last_scraped_at_over_snapshot():
     out = assemble_products(
         skus=[sku], trackings=[tracking],
         url_by_id={url_id: url}, snapshot_by_url={url_id: snap},
-        signal_by_sku={}, sku_used=1, sku_limit=100, max_competitors_per_sku=3,
+        signal_by_sku={}, total=1, sku_used=1, sku_limit=100, max_competitors_per_sku=3,
     )
     c = out.items[0].competitors[0]
     # The recent URL check wins over the stale snapshot timestamp.

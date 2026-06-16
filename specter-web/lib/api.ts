@@ -830,6 +830,7 @@ export interface Product {
 
 export interface ProductsResponse {
   items: Product[]
+  total: number          // total products; > items.length when the catalog is paginated
   sku_used: number
   sku_limit: number | null
   max_competitors_per_sku: number | null

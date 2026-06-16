@@ -15,6 +15,7 @@ export { PLAN_PRIORITY, PLAN_INTERVALS } from './plans'
 import { PLAN_PRIORITY, PLAN_INTERVALS, computeAdaptiveInterval } from './plans'
 import { getUnchangedStreak } from './state-ttl'
 import { claimDomainLock } from './dispatch-lock'
+import { addToBatch } from './batch-set'
 
 // ── Queue selection by domain classification ──────────────────────────────────
 
@@ -24,25 +25,6 @@ function selectQueue(classRaw: string | null): typeof probeQueue {
     case 'js_required': return playwrightQueue
     default:            return probeQueue  // null (UNKNOWN) → probe to classify
   }
-}
-
-/**
- * Add `trackingIds` to an already-in-flight job so one fetch serves every merchant
- * tracking the URL. (Read-modify-write: a fully concurrent merge can still race —
- * tracked separately — but the high-cost duplicate-FETCH race is closed by the
- * atomic lock claim below.)
- */
-async function mergeTrackingIds(
-  queue: typeof probeQueue,
-  jobId: string,
-  trackingIds: string[],
-): Promise<void> {
-  const existingJob = await queue.getJob(jobId)
-  if (!existingJob) return
-  const merged = [
-    ...new Set([...existingJob.data.competitorTrackingIds, ...trackingIds]),
-  ]
-  await existingJob.updateData({ ...existingJob.data, competitorTrackingIds: merged })
 }
 
 // ── Core dispatch: route + domain batching ────────────────────────────────────
@@ -78,8 +60,11 @@ export async function dispatchScrapeJob(
 
   if (existingJobId) {
     // Lock already held — batch onto the in-flight job rather than creating a
-    // second outbound request to the same URL.
-    await mergeTrackingIds(queue, existingJobId, job.competitorTrackingIds)
+    // second outbound request to the same URL. SADD is atomic, so concurrent
+    // batches onto the same job can't clobber each other (the old getJob→updateData
+    // merge was a read-modify-write that could drop a tracker). The worker unions
+    // these in when it runs.
+    await addToBatch(redis, existingJobId, job.competitorTrackingIds)
     return { jobId: existingJobId, batched: true }
   }
 
@@ -106,7 +91,7 @@ export async function dispatchScrapeJob(
   // is still fetched exactly once for every merchant tracking it.
   await newJob.remove()
   if (holder) {
-    await mergeTrackingIds(queue, holder, job.competitorTrackingIds)
+    await addToBatch(redis, holder, job.competitorTrackingIds)
     return { jobId: holder, batched: true }
   }
 

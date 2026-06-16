@@ -25,7 +25,7 @@ function makeProduct(overrides: Partial<Product> = {}): Product {
 }
 
 function makeProducts(items: Product[]): ProductsResponse {
-  return { items, sku_used: items.length, sku_limit: null, max_competitors_per_sku: null }
+  return { items, total: items.length, sku_used: items.length, sku_limit: null, max_competitors_per_sku: null }
 }
 
 function makeMerchant(overrides: Partial<Merchant> = {}): Merchant {

@@ -10,6 +10,7 @@ import { getProxyManager, agentFor, selectProxy, allowDirectFallback } from '../
 import { WORKER_RELIABILITY } from '../worker-options'
 import { getRobotsChecker } from './robots'
 import { detectPlatform } from '../domains/platform'
+import { unionBatchedTrackingIds } from '../batch-set'
 import type { ScrapeJob } from '../types'
 
 // Cloudflare JS-challenge body markers (heuristic 2)
@@ -217,8 +218,16 @@ async function classifyUrl(
 const worker = new Worker<ScrapeJob>(
   'scrape:probe',
   async (job: Job<ScrapeJob>) => {
-    const { url, domain, urlPath, competitorTrackingIds, plan } = job.data
+    const { url, domain, urlPath, plan } = job.data
     const priority = PLAN_PRIORITY[plan.toUpperCase()] ?? PLAN_PRIORITY.RECON
+
+    // Union any trackingIds batched onto this probe job (atomic SADD set, see
+    // batch-set.ts) and carry them forward to the follow-up scrape job below, so
+    // merchants that piled onto this URL aren't dropped at the probe→fetch handoff.
+    const competitorTrackingIds = await unionBatchedTrackingIds(
+      redis, String(job.id), job.data.competitorTrackingIds,
+    )
+    const batchedData: ScrapeJob = { ...job.data, competitorTrackingIds }
 
     const { classification, via } = await classifyUrl(url, domain, urlPath)
 
@@ -249,10 +258,12 @@ const worker = new Worker<ScrapeJob>(
     }
 
     // ── Enqueue follow-up scrape job ──────────────────────────────────────────
+    // Pass batchedData (own ids ∪ batched) so the fetch worker serves every
+    // merchant tracking this URL, not just those present when the probe was created.
     const followUpQueue = classification === 'http_ok' ? httpQueue : playwrightQueue
     await followUpQueue.add(
       `${domain}:${urlPath}`,
-      job.data,
+      batchedData,
       { priority },
     )
 
