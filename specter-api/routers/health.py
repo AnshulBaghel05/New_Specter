@@ -10,6 +10,8 @@ checks are overridable in tests.
 """
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Depends, Response, status
 from redis import Redis
 from sqlalchemy import text
@@ -43,7 +45,8 @@ async def health(
     redis_client: Redis = Depends(get_redis),
 ) -> dict:
     db_ok = await _check_db(session)
-    redis_ok = _check_redis(redis_client)
+    # _check_redis uses the sync redis client; run it off the event loop.
+    redis_ok = await asyncio.to_thread(_check_redis, redis_client)
     if not (db_ok and redis_ok):
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
     return {
