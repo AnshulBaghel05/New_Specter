@@ -1,10 +1,55 @@
 from __future__ import annotations
 import os
 from collections.abc import AsyncGenerator
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-DATABASE_URL = os.environ["DATABASE_URL"]
+# libpq-style query params that asyncpg.connect() does NOT accept as keyword args
+# (SQLAlchemy forwards unknown query params to the driver). asyncpg negotiates TLS
+# itself (default sslmode=prefer → uses SSL when the server requires it, as Supabase
+# / Neon do), so dropping these keeps a secure connection while avoiding a
+# "connect() got an unexpected keyword argument 'sslmode'" crash at first connect.
+_LIBPQ_ONLY_PARAMS = {"sslmode", "channel_binding", "gssencmode", "pgbouncer", "options"}
+
+
+def normalize_database_url(raw: str | None) -> str:
+    """Coerce a Postgres connection string into the async driver URL SQLAlchemy needs.
+
+    Handles the common deploy mistakes that otherwise crash the app on startup:
+      - bare ``postgres://`` / ``postgresql://`` schemes → ``postgresql+asyncpg://``
+      - surrounding whitespace or quotes from copy-paste / shell vars
+      - libpq-only query params (``sslmode``, ``channel_binding`` …) asyncpg rejects
+      - empty value or an unresolved ``${{ ... }}`` Railway reference → clear error
+    """
+    url = (raw or "").strip().strip('"').strip("'")
+    if not url or url.startswith("${{") or "${{" in url:
+        raise RuntimeError(
+            "DATABASE_URL is missing, empty, or an unresolved variable reference. "
+            "Set it to your Postgres connection string using the "
+            "postgresql+asyncpg:// scheme, e.g. "
+            "postgresql+asyncpg://USER:PASSWORD@HOST:6543/postgres"
+        )
+
+    if url.startswith("postgres://"):
+        url = "postgresql+asyncpg://" + url[len("postgres://"):]
+    elif url.startswith("postgresql://"):
+        url = "postgresql+asyncpg://" + url[len("postgresql://"):]
+
+    parts = urlsplit(url)
+    if parts.query:
+        kept = [
+            (k, v)
+            for k, v in parse_qsl(parts.query, keep_blank_values=True)
+            if k.lower() not in _LIBPQ_ONLY_PARAMS
+        ]
+        url = urlunsplit(
+            (parts.scheme, parts.netloc, parts.path, urlencode(kept), parts.fragment)
+        )
+    return url
+
+
+DATABASE_URL = normalize_database_url(os.environ.get("DATABASE_URL"))
 
 
 def _int_env(name: str, default: int) -> int:
