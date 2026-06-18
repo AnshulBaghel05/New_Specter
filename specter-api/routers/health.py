@@ -31,6 +31,14 @@ from redis_client import get_redis
 router = APIRouter(tags=["health"])
 
 
+@router.get("/")
+async def root() -> dict:
+    """Bare-domain sanity route: 200 with no dependencies. Hitting the public URL
+    root returns this instead of a 404, so a browser/curl to the domain confirms
+    the proxy is reaching the app. Not the healthcheck (that's /livez)."""
+    return {"service": "specter-api", "status": "ok"}
+
+
 @router.get("/livez")
 async def livez() -> dict:
     """Liveness probe: 200 the moment the process can serve a request. No external

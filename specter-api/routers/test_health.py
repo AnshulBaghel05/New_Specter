@@ -68,6 +68,14 @@ def _use(session, redis_client):
     app.dependency_overrides[get_redis] = lambda: redis_client
 
 
+def test_root_is_200_with_no_dependencies(client):
+    # Bare-domain route must answer 200 with no DB/Redis — a browser/curl hitting
+    # the public URL root confirms the proxy reaches the app.
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert resp.json() == {"service": "specter-api", "status": "ok"}
+
+
 def test_livez_is_200_with_no_dependencies(client):
     # Liveness must NOT touch DB/Redis: no dependency overrides are set here, yet
     # it must still return 200. This is what Railway gates the deploy on.
