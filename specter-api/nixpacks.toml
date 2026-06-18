@@ -1,0 +1,16 @@
+# Nixpacks build config for the specter-api service (FastAPI).
+#
+# Why this file exists: this repo is a monorepo (specter-api + specter-web) and
+# this service additionally ships a nested Node project at scraper/. If Railway's
+# Root Directory isn't pinned to specter-api — or Nixpacks auto-detection latches
+# onto a package.json — it builds a Node image with no Python interpreter, and the
+# deploy then dies at start with "python: command not found" / "uvicorn: command
+# not found". Forcing the Python provider makes the build deterministic so the
+# image always contains python + the deps from requirements.txt.
+providers = ["python"]
+
+[start]
+# Single-service (free-plan) entrypoint: run the dispatcher loop in the background
+# and serve the API in the foreground on Railway's injected $PORT. This mirrors the
+# dashboard "Custom Start Command"; keeping it here makes it version-controlled.
+cmd = "python run_dispatcher.py & uvicorn main:app --host 0.0.0.0 --port $PORT"
