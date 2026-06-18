@@ -68,11 +68,35 @@ def _use(session, redis_client):
     app.dependency_overrides[get_redis] = lambda: redis_client
 
 
+def test_livez_is_200_with_no_dependencies(client):
+    # Liveness must NOT touch DB/Redis: no dependency overrides are set here, yet
+    # it must still return 200. This is what Railway gates the deploy on.
+    resp = client.get("/livez")
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "ok"}
+
+
+def test_livez_200_even_when_dependencies_down(client):
+    # Even with both deps failing, liveness stays 200 — a dead DB must not block
+    # the deploy or get the live process killed.
+    _use(make_db(False), make_redis(False))
+    resp = client.get("/livez")
+    assert resp.status_code == 200
+
+
 def test_health_ok_when_both_up(client):
     _use(make_db(True), make_redis(True))
     resp = client.get("/health")
     assert resp.status_code == 200
     assert resp.json() == {"status": "ok", "db": "ok", "redis": "ok"}
+
+
+def test_readyz_alias_matches_health(client):
+    # /readyz is the same deep readiness check as /health (used by monitors).
+    _use(make_db(True), make_redis(True))
+    assert client.get("/readyz").status_code == 200
+    _use(make_db(False), make_redis(True))
+    assert client.get("/readyz").status_code == 503
 
 
 def test_health_503_when_db_down(client):

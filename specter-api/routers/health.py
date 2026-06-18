@@ -1,12 +1,20 @@
-"""Liveness/readiness probe for Railway (healthcheckPath = /health).
+"""Liveness + readiness probes for Railway.
 
-Returns 200 only when BOTH dependencies answer: Postgres (`SELECT 1`) and Redis
-(`PING`). Any failure → 503 so Railway pulls the instance out of rotation instead
-of routing traffic to a box that can't serve. The body always reports each
-dependency individually so a failing probe is self-diagnosing in the logs.
+Two distinct probes, on purpose:
 
-Uses the get_db / get_redis dependencies (not the module-level singletons) so the
-checks are overridable in tests.
+  /livez  — LIVENESS. Returns 200 as long as the process is up. No DB, no Redis,
+            no auth. This is what Railway's healthcheck gates the deploy on
+            (railway.toml healthcheckPath = /livez), so a transient/misconfigured
+            Postgres or Redis can never block the deploy from going live — the
+            failure shows up in /readyz and the logs instead of bricking the box.
+
+  /health, /readyz — READINESS. Returns 200 only when BOTH dependencies answer:
+            Postgres (`SELECT 1`) and Redis (`PING`). Any failure → 503, with the
+            body naming the culprit, so a load balancer / monitor can pull the
+            instance and an operator can see *which* dependency is down.
+
+The readiness checks use the get_db / get_redis dependencies (not the module-level
+singletons) so they are overridable in tests.
 """
 from __future__ import annotations
 
@@ -21,6 +29,14 @@ from db import get_db
 from redis_client import get_redis
 
 router = APIRouter(tags=["health"])
+
+
+@router.get("/livez")
+async def livez() -> dict:
+    """Liveness probe: 200 the moment the process can serve a request. No external
+    dependencies — Railway gates the deploy on this so DB/Redis state never blocks
+    a rollout. Use /health or /readyz to verify dependencies."""
+    return {"status": "ok"}
 
 
 async def _check_db(session: AsyncSession) -> bool:
@@ -39,6 +55,7 @@ def _check_redis(client: Redis) -> bool:
 
 
 @router.get("/health")
+@router.get("/readyz")
 async def health(
     response: Response,
     session: AsyncSession = Depends(get_db),

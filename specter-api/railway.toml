@@ -11,8 +11,11 @@ builder = "nixpacks"
 [deploy]
 # Railway injects $PORT; bind 0.0.0.0 so the platform proxy can reach us.
 startCommand = "uvicorn main:app --host 0.0.0.0 --port $PORT"
-# /health is 200 only when Postgres + Redis both answer (routers/health.py).
-healthcheckPath = "/health"
+# /livez is a pure liveness probe (200 once the process serves) — gating the
+# deploy on it means a slow/misconfigured Postgres or Redis can't brick a rollout.
+# Dependency health is exposed separately at /health and /readyz (503 if either
+# Postgres or Redis is down) for monitoring, not for deploy gating.
+healthcheckPath = "/livez"
 healthcheckTimeout = 300
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
