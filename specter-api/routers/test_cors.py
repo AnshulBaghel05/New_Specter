@@ -30,6 +30,18 @@ def test_blank_entries_dropped():
     ]
 
 
+def test_trailing_slash_stripped():
+    # The production bug: ALLOWED_ORIGINS=https://new-specter.vercel.app/ must
+    # still match the browser Origin (https://new-specter.vercel.app, no slash).
+    assert parse_allowed_origins("https://new-specter.vercel.app/") == [
+        "https://new-specter.vercel.app"
+    ]
+    assert parse_allowed_origins("https://a.com/, https://b.com///") == [
+        "https://a.com",
+        "https://b.com",
+    ]
+
+
 # ── M3: fail closed in production ─────────────────────────────────────────────
 
 def test_is_production_env_true_for_deployed_names():

@@ -24,8 +24,16 @@ app = FastAPI(title="specter-api", version="0.2.0")
 # authenticates with a Bearer JWT (not cookies), so "*" needs none.
 def parse_allowed_origins(raw: str | None) -> list[str]:
     """Parse the ALLOWED_ORIGINS env value into a CORS origins list.
-    Comma-separated origins → that list; empty/unset → ["*"] (open, dev default)."""
-    origins = [o.strip() for o in (raw or "").split(",") if o.strip()]
+    Comma-separated origins → that list; empty/unset → ["*"] (open, dev default).
+
+    Trailing slashes are stripped: a browser's `Origin` header is the bare scheme
+    + host (+ port) with NO path, so an allowlist entry of
+    `https://app.vercel.app/` would never match `https://app.vercel.app` and the
+    CORSMiddleware would emit no Access-Control-Allow-Origin header — silently
+    breaking every cross-origin call. Normalising here makes the env value
+    slash-insensitive."""
+    origins = [o.strip().rstrip("/") for o in (raw or "").split(",")]
+    origins = [o for o in origins if o]
     return origins or ["*"]
 
 
