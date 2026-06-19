@@ -1,0 +1,29 @@
+# Nixpacks build config for the SPECTER scraper (Node / BullMQ workers).
+#
+# Why this file exists: Nixpacks' built-in Playwright provider auto-generates a
+# BUILD phase of `npm ci && npx playwright install --with-deps chromium`. But
+# `npm ci` already runs in the INSTALL phase, so the build re-runs it — a second
+# clean install that wipes node_modules and dies with
+#   EBUSY: resource busy or locked, rmdir '/app/node_modules/.cache'  (exit 240)
+# on Railway's Metal builder. We take control of the phases so npm ci runs ONCE.
+
+providers = ["node"]
+
+[phases.install]
+# Single clean install. --include=dev so ts-node + typescript (devDependencies)
+# stay present at runtime — the workers are launched with ts-node, and Railway may
+# set NODE_ENV=production, which would otherwise omit devDependencies.
+cmds = ["npm ci --include=dev"]
+
+[phases.build]
+# Only fetch the Chromium binary for the Playwright worker. NO second `npm ci`
+# here (that is what was failing). The system libraries (libnss3, libgbm1, …) are
+# already installed by Nixpacks' Playwright setup phase, so --with-deps is not
+# needed and we skip a redundant apt run.
+cmds = ["npx playwright install chromium"]
+
+[start]
+# Free-plan: run the two lightweight workers in one service. `wait` keeps the
+# container alive so Railway does not treat an exit as a crash. Add the Playwright
+# worker (`npx ts-node workers/playwright.ts`) once you confirm RAM headroom.
+cmd = "npx ts-node workers/probe.ts & npx ts-node workers/http.ts & wait"

@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "description": "SPECTER BullMQ scraping engine",
   "private": true,
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build": "tsc",
     "dev": "ts-node scheduler.ts",
