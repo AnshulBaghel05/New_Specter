@@ -23,7 +23,9 @@ cmds = ["npm ci --include=dev"]
 cmds = ["npx playwright install chromium"]
 
 [start]
-# Free-plan: run the two lightweight workers in one service. `wait` keeps the
-# container alive so Railway does not treat an exit as a crash. Add the Playwright
-# worker (`npx ts-node workers/playwright.ts`) once you confirm RAM headroom.
-cmd = "npx ts-node workers/probe.ts & npx ts-node workers/http.ts & wait"
+# Run all three workers in one service. `wait` is REQUIRED: it keeps the container
+# alive for as long as ANY worker runs, so if one exits the others aren't killed
+# and Railway doesn't see an exit-0 as a crash. The build installs Chromium for the
+# Playwright worker — note it is RAM-heavy (~300-500MB); drop workers/playwright.ts
+# from this line if the free-plan instance OOMs.
+cmd = "npx ts-node workers/probe.ts & npx ts-node workers/http.ts & npx ts-node workers/playwright.ts & wait"
