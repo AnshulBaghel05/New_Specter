@@ -18,10 +18,9 @@ import {
 } from '@tanstack/react-query'
 import { createClient } from '@/lib/supabase/client'
 import { ApiError } from '@/lib/api'
+import { API_URL } from '@/lib/api-url'
 import { PREVIEW } from '@/lib/preview-data'
 import { buildOpportunityFeed, type OpportunityItem, type SavedCalc } from '@/lib/tools/workspace'
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
 
 // ── Types (mirror specter-api CalculationOut) ─────────────────────────────────
 

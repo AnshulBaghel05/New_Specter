@@ -9,7 +9,10 @@
 import 'dotenv/config'
 import { createHmac, createHash } from 'node:crypto'
 
-const SPECTER_API_URL = process.env.SPECTER_API_URL ?? 'http://localhost:8000'
+// Strip any trailing slash(es) so `${SPECTER_API_URL}${path}` (path starts with
+// "/") can never produce a `//internal/...` double slash — FastAPI 404s on that
+// and every ingest POST would silently fail. Mirrors scrape-health-view.ts.
+const SPECTER_API_URL = (process.env.SPECTER_API_URL ?? 'http://localhost:8000').replace(/\/+$/, '')
 
 // Fixed namespace for v5 ids derived from BullMQ job ids (any constant uuid works).
 const NAMESPACE_BYTES = Buffer.from('6f1c2d3e4a5b6c7d8e9f0a1b2c3d4e5f', 'hex')

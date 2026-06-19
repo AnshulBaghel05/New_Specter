@@ -32,7 +32,7 @@ import {
   previewProductsResponse,
 } from '@/lib/preview-data'
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
+import { API_URL } from '@/lib/api-url'
 
 // ── Types (mirror specter-api Pydantic schemas) ─────────────────────────────
 
