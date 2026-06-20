@@ -14,8 +14,13 @@ builder = "nixpacks"
 # version live — a bad/blocked migration can never take the site down. alembic's
 # env.py auto-targets the Supabase session pooler (:5432); see its comments.
 preDeployCommand = "python -m alembic upgrade head"
-# Railway injects $PORT; bind 0.0.0.0 so the platform proxy can reach us.
-startCommand = "uvicorn main:app --host 0.0.0.0 --port $PORT"
+# Single-service (free-plan) entrypoint: run the control-plane dispatcher in the
+# background (it ticks every DISPATCH_TICK_SECONDS, enqueuing due competitor-URL
+# crawls to Redis for the scraper workers) AND serve the API in the foreground on
+# Railway's injected $PORT. Without the dispatcher, no scrape jobs are ever queued
+# and competitor prices/signals go stale. uvicorn stays foreground so the platform
+# health check (/livez) and proxy bind work; the dispatcher self-heals per-tick.
+startCommand = "python run_dispatcher.py & uvicorn main:app --host 0.0.0.0 --port $PORT"
 # /livez is a pure liveness probe (200 once the process serves) — gating the
 # deploy on it means a slow/misconfigured Postgres or Redis can't brick a rollout.
 # Dependency health is exposed separately at /health and /readyz (503 if either
