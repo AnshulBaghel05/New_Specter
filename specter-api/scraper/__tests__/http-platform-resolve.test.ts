@@ -4,19 +4,35 @@ import { resolvePlatformParse } from '../domains/index'
 const SHOPIFY_HTML = '<html>cdn.shopify.com<meta property="og:price:currency" content="USD"></html>'
 
 describe('resolvePlatformParse', () => {
-  it('prefers the Shopify .json endpoint over generic HTML', async () => {
-    const fetchText = vi.fn().mockResolvedValue(
-      JSON.stringify({ product: { title: 'A', variants: [{ price: '12.00', available: true }] } }))
+  it('prefers the Shopify .js endpoint (reliable availability) over generic HTML', async () => {
+    // .js carries price in cents + a real `available`; resolver tries it first.
+    const fetchText = vi.fn().mockImplementation((u: string) =>
+      Promise.resolve(u.endsWith('.js')
+        ? JSON.stringify({ title: 'A', price: 1200, available: true, variants: [{ price: 1200, available: true }] })
+        : null))
     const r = await resolvePlatformParse('https://s.com/products/a', SHOPIFY_HTML, {}, fetchText)
-    expect(fetchText).toHaveBeenCalledWith('https://s.com/products/a.json')
+    expect(fetchText).toHaveBeenCalledWith('https://s.com/products/a.js')
     expect(r).toEqual({ price: 12.0, inStock: true, currency: 'USD', title: 'A' })
   })
 
-  it('falls back to generic HTML when the Shopify endpoint fails', async () => {
+  it('falls back to .json (price/title) + HTML availability when .js is blocked', async () => {
+    // Gymshark-style: .js 404s, but .json works for price/title; stock comes from
+    // the page HTML so we do not falsely report the product out of stock.
+    const html = SHOPIFY_HTML.replace('</html>',
+      '<meta property="og:availability" content="instock"></html>')
+    const fetchText = vi.fn().mockImplementation((u: string) =>
+      Promise.resolve(u.endsWith('.js')
+        ? null
+        : JSON.stringify({ product: { title: 'A', variants: [{ price: '12.00' }] } })))  // no `available`
+    const r = await resolvePlatformParse('https://s.com/products/a', html, {}, fetchText)
+    expect(r).toEqual({ price: 12.0, inStock: true, currency: 'USD', title: 'A' })
+  })
+
+  it('falls back to generic HTML when both Shopify endpoints fail', async () => {
     const html = SHOPIFY_HTML + '<script type="application/ld+json">' +
       JSON.stringify({ '@type': 'Product', name: 'B', offers: { price: '7.50', priceCurrency: 'USD', availability: 'InStock' } }) +
       '</script>'
-    const fetchText = vi.fn().mockResolvedValue(null)   // endpoint down
+    const fetchText = vi.fn().mockResolvedValue(null)   // both endpoints down
     const r = await resolvePlatformParse('https://s.com/products/b', html, {}, fetchText)
     expect(r?.price).toBe(7.5)
   })

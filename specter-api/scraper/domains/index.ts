@@ -2,7 +2,7 @@ import type { Page } from 'playwright'
 import type { ParseResult } from '../types'
 import * as generic from './generic'
 import { detectPlatform } from './platform'
-import { shopifyProductJsonUrl, parseShopifyJson } from './shopify'
+import { shopifyProductJsonUrl, parseShopifyJson, shopifyProductJsUrl, parseShopifyJs } from './shopify'
 import { wooStoreApiUrl, parseWooStoreApi, parseWooHtml } from './woocommerce'
 
 // ── Domain parser interface (used by the Playwright worker for live pages) ─────
@@ -34,6 +34,18 @@ function currencyFromHtml(html: string): string {
   return 'USD'
 }
 
+/** Read product availability from page HTML — used to fix stock when the Shopify
+ * `.json` fallback (which omits `available`) is the only structured source. Reads
+ * og/product:availability meta then schema.org availability. Returns true/false,
+ * or null when the page carries no availability signal. */
+function availabilityFromHtml(html: string): boolean | null {
+  const meta = html.match(/<meta[^>]+(?:og:availability|product:availability)[^>]+content=["']([^"']+)["']/i)
+  if (meta) return /instock|in stock|available/i.test(meta[1]) && !/out|oos/i.test(meta[1])
+  const ld = html.match(/"availability"\s*:\s*"([^"]+)"/i)
+  if (ld) return /instock/i.test(ld[1]) && !/outofstock/i.test(ld[1])
+  return null
+}
+
 /**
  * Structured-first parse for the http worker. When the page fingerprints as a
  * known platform, fetch its structured endpoint (via the injected datacenter
@@ -50,9 +62,16 @@ export async function resolvePlatformParse(
   const platform = detectPlatform(headers, html)
 
   if (platform === 'shopify') {
-    const text = await fetchText(shopifyProductJsonUrl(url))
-    const parsed = text ? parseShopifyJson(text, currencyFromHtml(html)) : null
-    if (parsed) return parsed
+    // Primary: the `.js` endpoint — price (cents) AND a reliable `available`.
+    const js = await fetchText(shopifyProductJsUrl(url))
+    const fromJs = js ? parseShopifyJs(js, currencyFromHtml(html)) : null
+    if (fromJs) return fromJs
+    // Fallback: `.js` blocked but `.json` works (price/title) — the public `.json`
+    // has no `available`, so take stock from the page HTML (default in-stock when
+    // the page exposes no signal, to avoid a false out-of-stock storm).
+    const json = await fetchText(shopifyProductJsonUrl(url))
+    const fromJson = json ? parseShopifyJson(json, currencyFromHtml(html)) : null
+    if (fromJson) return { ...fromJson, inStock: availabilityFromHtml(html) ?? true }
   } else if (platform === 'woocommerce') {
     const api = wooStoreApiUrl(url)
     if (api) {
