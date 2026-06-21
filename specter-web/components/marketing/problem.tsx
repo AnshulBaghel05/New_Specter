@@ -24,7 +24,7 @@ const PAINS = [
   },
   {
     icon: Bell,
-    title: 'OOS is a hidden gold mine',
+    title: 'Out-of-stock is a hidden gold mine',
     body: "When Nike.com goes out of stock on a colorway, merchants who know first capture the demand spike. By the time you notice, the window is closed and someone else got the sale.",
     borderClass: 'problem-oos',
     iconBg: 'bg-yellow-400/10 border-yellow-400/20',

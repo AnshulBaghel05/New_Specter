@@ -67,7 +67,7 @@ export default function Hero() {
           SPECTER tracks competitor prices and stock in real time, then delivers
           AI-powered{' '}
           <span className="text-text font-semibold">RAISE / LOWER / HOLD</span> signals
-          directly to your Shopify dashboard.
+          directly to your Shopify or WooCommerce dashboard.
         </motion.p>
 
         {/* CTAs */}

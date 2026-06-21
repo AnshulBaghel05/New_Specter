@@ -11,14 +11,18 @@ interface StatConfig {
   decimals?: number
 }
 
+// Defensible capability claims — not customer-outcome metrics. Every number here
+// is a property of how the product works, true on day one with zero customers.
 const STATS: StatConfig[] = [
-  { end: 12400, prefix: '',  suffix: '+',  label: 'SKUs monitored daily',   decimals: 0 },
-  { end: 2.1,   prefix: '$', suffix: 'M',  label: 'Revenue recovered MTD',  decimals: 1 },
-  { end: 99.3,  prefix: '',  suffix: '%',  label: 'Scrape uptime',           decimals: 1 },
-  { end: 15,    prefix: '< ',suffix: ' min',label: 'Avg signal latency',    decimals: 0 },
+  { end: 15,  prefix: '< ', suffix: ' min',   label: 'From price change to signal',         decimals: 0 },
+  { end: 24,  prefix: '',   suffix: '/7',     label: 'Hands-off monitoring',                decimals: 0 },
+  { end: 1,   prefix: '',   suffix: ' crawl', label: 'Per domain — not per SKU',            decimals: 0 },
+  { end: 100, prefix: '',   suffix: '%',      label: 'robots.txt & rate limits respected',  decimals: 0 },
 ]
 
-const PLATFORMS = ['Shopify', 'WooCommerce', 'Klaviyo', 'Slack', 'Stripe']
+// Only integrations that actually ship. Slack/Klaviyo/etc. are reachable via the
+// PHANTOM+ outbound webhooks, not native connectors — so they're not claimed here.
+const PLATFORMS = ['Shopify', 'WooCommerce', 'Webhooks', 'REST API']
 
 function CountStat({ end, prefix, suffix, label, decimals = 0 }: StatConfig) {
   const [value, setValue] = useState(0)
@@ -95,7 +99,7 @@ export default function SocialProof() {
 
         {/* Platform pills */}
         <div ref={pillsRef} className="flex items-center justify-center gap-2 flex-wrap">
-          <span className="text-xs text-muted font-body mr-3">Integrates with</span>
+          <span className="text-xs text-muted font-body mr-3">Works with</span>
           {PLATFORMS.map((p) => (
             <span
               key={p}

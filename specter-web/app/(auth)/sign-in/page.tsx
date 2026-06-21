@@ -68,10 +68,10 @@ export default function SignInPage() {
       {/* Heading */}
       <div className="mb-8">
         <h1 className="font-display text-3xl font-bold text-text tracking-tight">
-          Initiate Session<span className="text-primary">.</span>
+          Welcome back<span className="text-primary">.</span>
         </h1>
         <p className="font-body text-sm text-muted mt-2">
-          Enter your operator credentials to access the dashboard.
+          Sign in to your SPECTER dashboard.
         </p>
       </div>
 
@@ -90,11 +90,11 @@ export default function SignInPage() {
 
         <AuthField
           id="email"
-          label="Registry Email"
+          label="Email"
           icon={Mail}
           type="email"
           autoComplete="email"
-          placeholder="operator@company.com"
+          placeholder="you@company.com"
           error={errors.email?.message}
           {...register('email')}
         />
@@ -102,7 +102,7 @@ export default function SignInPage() {
         <div>
           <AuthField
             id="password"
-            label="Access Keyword"
+            label="Password"
             icon={Lock}
             passwordToggle
             autoComplete="current-password"
@@ -115,7 +115,7 @@ export default function SignInPage() {
               href="/forgot-password"
               className="font-mono text-[11px] tracking-[0.1em] uppercase text-primary/80 hover:text-primary transition-colors"
             >
-              Recover Protocol
+              Forgot password?
             </Link>
           </div>
         </div>
@@ -135,7 +135,7 @@ export default function SignInPage() {
             </>
           ) : (
             <>
-              Sign In Profile
+              Sign in
               <ArrowRight size={16} aria-hidden="true" />
             </>
           )}
@@ -149,12 +149,12 @@ export default function SignInPage() {
         <div className="h-px flex-1 bg-border" />
       </div>
 
-      <GoogleButton label="Initiate Google ID" next="/dashboard" onError={setAuthError} />
+      <GoogleButton label="Continue with Google" next="/dashboard" onError={setAuthError} />
 
       <p className="text-center font-body text-sm text-muted mt-8">
-        New to the swarm?{' '}
+        New to SPECTER?{' '}
         <Link href="/sign-up" className="text-primary hover:underline font-medium">
-          Register Account →
+          Create an account →
         </Link>
       </p>
     </AuthLayout>

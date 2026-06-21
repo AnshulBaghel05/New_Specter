@@ -45,12 +45,15 @@ export const metadata: Metadata = {
     title: 'SPECTER — Competitor Pricing Intelligence for Shopify',
     description:
       'Real-time competitor price and stock monitoring with AI signals. Know before they move.',
-    images: [{ url: '/og-image.png', width: 1200, height: 630, alt: 'SPECTER' }],
+    images: [{
+      url: '/og-image.png', width: 1200, height: 630,
+      alt: 'SPECTER — competitor price monitoring dashboard for Shopify and WooCommerce',
+    }],
   },
   twitter: {
     card: 'summary_large_image',
     title: 'SPECTER — Competitor Pricing Intelligence',
-    description: 'Real-time competitor price monitoring with AI signals for Shopify.',
+    description: 'Real-time competitor price monitoring with AI signals for Shopify & WooCommerce.',
     images: ['/og-image.png'],
   },
   robots: {
@@ -81,6 +84,41 @@ export default function RootLayout({
       } as React.CSSProperties}
     >
       <body className="font-body bg-bg text-text antialiased">
+        {/* Organization + SoftwareApplication structured data. The description is
+            the canonical one-sentence definition AI search engines extract. */}
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify([
+              {
+                '@context': 'https://schema.org',
+                '@type': 'Organization',
+                name: 'SPECTER',
+                url: 'https://specterapp.io',
+                logo: 'https://specterapp.io/og-image.png',
+                description:
+                  'SPECTER is competitor price-monitoring software for Shopify and WooCommerce stores: it tracks rival prices and stock in real time and tells you exactly when to raise, lower, or hold.',
+                sameAs: [],
+              },
+              {
+                '@context': 'https://schema.org',
+                '@type': 'SoftwareApplication',
+                name: 'SPECTER',
+                applicationCategory: 'BusinessApplication',
+                operatingSystem: 'Web',
+                url: 'https://specterapp.io',
+                description:
+                  'Competitor price-monitoring software for Shopify and WooCommerce. SPECTER tracks competitor prices and stock in real time and delivers AI-powered RAISE, LOWER, and HOLD pricing signals.',
+                offers: {
+                  '@type': 'Offer',
+                  price: '0',
+                  priceCurrency: 'USD',
+                  description: 'Free 14-day trial — no credit card required.',
+                },
+              },
+            ]),
+          }}
+        />
         <Providers>{children}</Providers>
       </body>
     </html>

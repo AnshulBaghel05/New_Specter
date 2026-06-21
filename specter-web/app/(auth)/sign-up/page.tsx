@@ -88,7 +88,7 @@ export default function SignUpPage() {
             </div>
           </div>
           <h1 className="font-display text-2xl font-bold text-text mb-2 tracking-tight">
-            Briefing Dispatched
+            Check your inbox
           </h1>
           <p className="font-body text-sm text-muted mb-1">
             We sent a confirmation link to
@@ -103,7 +103,7 @@ export default function SignUpPage() {
           <p className="text-center font-body text-sm text-muted mt-8">
             Already confirmed?{' '}
             <Link href="/sign-in" className="text-primary hover:underline font-medium">
-              Sign In Profile →
+              Sign in →
             </Link>
           </p>
         </motion.div>
@@ -116,10 +116,10 @@ export default function SignUpPage() {
       {/* Heading */}
       <div className="mb-7">
         <h1 className="font-display text-3xl font-bold text-text tracking-tight">
-          Register Operator<span className="text-primary">.</span>
+          Start your free trial<span className="text-primary">.</span>
         </h1>
         <p className="font-body text-sm text-muted mt-2">
-          Initialize your profile to begin the 14-day mission briefing.
+          14 days free. No credit card required.
         </p>
       </div>
 
@@ -139,7 +139,7 @@ export default function SignUpPage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <AuthField
             id="full_name"
-            label="Full Identity"
+            label="Full name"
             icon={User}
             type="text"
             autoComplete="name"
@@ -149,7 +149,7 @@ export default function SignUpPage() {
           />
           <AuthField
             id="organization"
-            label="Organization"
+            label="Company"
             icon={Building2}
             type="text"
             autoComplete="organization"
@@ -161,22 +161,22 @@ export default function SignUpPage() {
 
         <AuthField
           id="email"
-          label="Deployment Email"
+          label="Work email"
           icon={Mail}
           type="email"
           autoComplete="email"
-          placeholder="operator@company.com"
+          placeholder="you@company.com"
           error={errors.email?.message}
           {...register('email')}
         />
 
         <AuthField
           id="password"
-          label="Secure Key"
+          label="Password"
           icon={KeyRound}
           passwordToggle
           autoComplete="new-password"
-          placeholder="Minimum 8 characters"
+          placeholder="At least 8 characters"
           error={errors.password?.message}
           {...register('password')}
         />
@@ -192,11 +192,11 @@ export default function SignUpPage() {
                 className="w-4 h-4 border-2 border-bg/40 border-t-bg rounded-full animate-spin"
                 aria-hidden="true"
               />
-              Launching…
+              Creating your account…
             </>
           ) : (
             <>
-              Launch Swarm Trial
+              Start free trial
               <ArrowRight size={16} aria-hidden="true" />
             </>
           )}
@@ -221,12 +221,12 @@ export default function SignUpPage() {
         <div className="h-px flex-1 bg-border" />
       </div>
 
-      <GoogleButton label="Initiate Google ID" next="/dashboard" onError={setAuthError} />
+      <GoogleButton label="Continue with Google" next="/dashboard" onError={setAuthError} />
 
       <p className="text-center font-body text-sm text-muted mt-8">
-        Already part of the swarm?{' '}
+        Already have an account?{' '}
         <Link href="/sign-in" className="text-primary hover:underline font-medium">
-          Sign In Profile →
+          Sign in →
         </Link>
       </p>
     </AuthLayout>

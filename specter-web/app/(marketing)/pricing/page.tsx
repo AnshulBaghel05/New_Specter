@@ -221,7 +221,7 @@ const FAQS = [
   },
   {
     q: 'What integrations does SPECTER support?',
-    a: 'Out of the box: Shopify (1-click install, Admin API price writes), WooCommerce (REST API key), Slack (OOS + signal alerts), Klaviyo (trigger flows on OOS events), and Stripe (billing). PHANTOM+ adds custom outbound webhooks — push any event to your own systems.',
+    a: 'Out of the box: Shopify (1-click install, Admin API price writes) and WooCommerce (REST API key). PHANTOM and above add custom outbound webhooks — every signal and OOS event is pushed to your endpoint as an HMAC-signed JSON payload, so you can route alerts into Slack, Klaviyo, or any internal system through your own automation. PREDATOR and ECLIPSE can also call our REST API directly.',
   },
   {
     q: 'Does SPECTER work with Amazon or other marketplaces?',
@@ -604,6 +604,20 @@ export default function PricingPage() {
 
         {/* FAQ */}
         <section className="py-20 bg-bg px-6">
+          <script
+            type="application/ld+json"
+            dangerouslySetInnerHTML={{
+              __html: JSON.stringify({
+                '@context': 'https://schema.org',
+                '@type': 'FAQPage',
+                mainEntity: FAQS.map(({ q, a }) => ({
+                  '@type': 'Question',
+                  name: q,
+                  acceptedAnswer: { '@type': 'Answer', text: a },
+                })),
+              }),
+            }}
+          />
           <div className="max-w-3xl mx-auto">
             <div className="text-center mb-14">
               <p className="font-mono text-primary text-xs uppercase tracking-widest mb-3">Pricing FAQ</p>

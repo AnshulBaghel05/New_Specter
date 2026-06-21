@@ -45,6 +45,21 @@ export default function Faq() {
 
   return (
     <section id="faq" className="py-24 bg-bg">
+      {/* FAQPage structured data so search + AI engines can extract the Q&A. */}
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify({
+            '@context': 'https://schema.org',
+            '@type': 'FAQPage',
+            mainEntity: FAQS.map(({ q, a }) => ({
+              '@type': 'Question',
+              name: q,
+              acceptedAnswer: { '@type': 'Answer', text: a },
+            })),
+          }),
+        }}
+      />
       <div className="max-w-3xl mx-auto px-6">
         <div ref={headingRef} className="text-center mb-16">
           <p className="font-mono text-primary text-xs uppercase tracking-widest mb-4">FAQ</p>
