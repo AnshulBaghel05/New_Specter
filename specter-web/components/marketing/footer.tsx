@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils'
 
 const LINKS = {
   Product: [
-    { label: 'Features', href: '/#features' },
+    { label: 'Features', href: '/features' },
     { label: 'Pricing', href: '/pricing' },
     { label: 'Integrations', href: '/#integrations' },
     { label: 'Changelog', href: '/changelog' },
@@ -66,7 +66,7 @@ export default function Footer() {
               SPECTER<span className="text-primary">.</span>
             </Link>
             <p className="font-body text-xs text-muted leading-relaxed max-w-[180px] mb-4">
-              AI-powered competitor pricing intelligence for Shopify merchants.
+              AI-powered competitor pricing intelligence for Shopify and WooCommerce merchants.
             </p>
 
             {/* Social links */}
