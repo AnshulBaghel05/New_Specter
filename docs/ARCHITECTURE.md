@@ -44,6 +44,7 @@
 4. specter-api `/internal/price-snapshot` fans out: for each competitor_tracking_id in the job,
    find the own_product_id and trigger the signal engine
 5. Signal Engine: for a given own_product, fetch latest snapshot from every ENABLED competitor_tracking
+5.0 **Currency normalization** — each competitor snapshot price (in its own scraped `price_snapshots.currency`) is converted into the product's `skus.currency` via the FX service (`services/fx.py`: USD-pivot rates, Redis-cached live table over an embedded static fallback) BEFORE any comparison. One FX table is loaded per cycle; an un-mappable competitor currency passes through unchanged rather than breaking the cycle.
 5a. RECON: rule-based engine applies RAISE/LOWER/HOLD → signals row (source='rule')
 5b. CIPHER+: AI Engine batches own_products (≤50 per call) → Gemini 1.5 Pro → signals row (source='ai', price_suggestion populated)
     └── on Gemini failure (timeout / invalid JSON / quota exhausted): rule-based fallback → signals row (source='rule', ai_fallback=true)
@@ -57,7 +58,9 @@ Row-level security (RLS) enabled. All queries go through specter-api (not direct
 
 ```
 skus (own products imported from Shopify)
-  id | merchant_id | title | handle | current_price | floor_price | ceiling_price | ...
+  id | merchant_id | title | handle | current_price | floor_price | ceiling_price | currency | ...
+  currency: ISO-4217 the product's prices are in (default 'USD'); competitor
+            snapshots are FX-converted into this before signal math.
 
 competitor_urls (URL registry — one row per unique domain+path across all merchants)
   id | domain | url_path | last_scraped_at | robots_blocked | currency
@@ -88,6 +91,21 @@ The dashboard exposes the full SKU tree through ONE aggregated read endpoint, `G
 Two dashboard tabs are client-side lenses over this single response (shared TanStack cache — one fetch, two views):
 - **Products** tab — by-your-product view: add a product, link competitors, watch its RAISE/LOWER/HOLD signal.
 - **Competitors** tab — the same data pivoted by competitor domain (per-domain health, avg price gap, in-stock/OOS counts).
+
+**Product deletion (`DELETE /skus/{id}`).** Permanently removes a product and
+cascades children-first so no FK is violated: `price_changes → signals →
+oos_alerts → competitor_trackings → sku`, then recomputes the schedule of every
+competitor URL that lost its last tracking (`refresh_url_schedule` clears
+`next_run_at` so orphaned URLs stop being scraped). SKU usage is derived live from
+enabled trackings, so removing them IS the usage recalculation. Returns 404 (not
+403) for a row the caller doesn't own. The frontend gates it behind a typed
+title-confirmation modal.
+
+**Dispatcher self-heal.** `claim_due_urls` only sees rows with `next_run_at` set,
+so a tracked URL that lands with `next_run_at` NULL (legacy/seed data, or a cleared
+schedule) would never dispatch. Each tick `heal_unscheduled_urls` finds such rows
+(enabled tracking + NULL schedule + not robots-blocked) and recomputes their
+schedule, so competitor prices always start flowing — no stuck "pending" URLs.
 
 Mutations (create SKU, link/remove competitor, silence OOS) reuse the existing `/skus` and `/competitors/track` endpoints and invalidate the `products` query so both lenses stay in sync.
 

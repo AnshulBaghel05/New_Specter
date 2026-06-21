@@ -32,6 +32,8 @@
 4. First scrape job queued immediately (not on next scheduled run)
 5. Merchant sees "Tracking" status within 5 minutes; SKU usage meter increments by 1
 6. Merchant can delete a tracking; `competitor_trackings.enabled` set to false (soft delete), scraping stops within 1 job cycle
+7. Merchant can **permanently delete a product** (`DELETE /skus/{id}`) — a hard cascade (price_changes → signals → oos_alerts → competitor_trackings → sku) that also reschedules any competitor URL left untracked, gated in the UI behind a typed title-confirmation modal. Distinct from the per-tracking soft delete above. SKU usage drops automatically (it's `COUNT(enabled trackings)`).
+8. Each product carries a **currency** (ISO-4217, default USD), chosen in the add/edit form; used for display and as the target for competitor-price FX normalization (see F4).
 7. Merchant can silence OOS alerts per tracking (`competitor_trackings.silenced_oos = true`) without deleting the tracking
 
 **Edge Cases:**
@@ -73,6 +75,7 @@
 **Acceptance Criteria:**
 1. Signal generated within 5 minutes of price_snapshot insert
 2. Competitor data set = latest price_snapshot for each `competitor_tracking` where `enabled = true` and own_product_id matches
+2a. **Currency normalization:** each competitor snapshot price (`price_snapshots.currency`) is FX-converted into the product's `skus.currency` (via `services/fx.py`) before any comparison below — so all of `current_price`, median, and competitor prices are like-for-like. Rates are USD-pivot, Redis-cached live over a static fallback; an un-mappable currency passes through unchanged (never breaks the cycle).
 3. RAISE: any competitor in the data set has price > merchant `current_price` AND `in_stock = true`
 4. LOWER: merchant `current_price` > 5% above median price of all in-stock competitors in the data set
 5. HOLD: merchant price within ±2% of median competitor price
