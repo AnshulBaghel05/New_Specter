@@ -141,11 +141,13 @@ async def _has_active_alert(
     return (await session.execute(stmt)).scalar_one_or_none() is not None
 
 
-async def _resolve_alerts(
+async def active_alerts_for_url(
     session: AsyncSession,
     competitor_url_id: uuid.UUID,
-) -> None:
-    """Set resolved_at on all active alerts for a competitor URL."""
+) -> list[OOSAlert]:
+    """Un-resolved OOS alerts for a competitor URL. Used to detect a restock: if a
+    snapshot comes back in stock and these exist, they're about to be resolved —
+    the caller can notify the merchant their competitor is back in stock first."""
     stmt = (
         select(OOSAlert)
         .join(CompetitorTracking, OOSAlert.competitor_tracking_id == CompetitorTracking.id)
@@ -154,7 +156,15 @@ async def _resolve_alerts(
             OOSAlert.resolved_at.is_(None),
         )
     )
-    alerts = list((await session.execute(stmt)).scalars().all())
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def _resolve_alerts(
+    session: AsyncSession,
+    competitor_url_id: uuid.UUID,
+) -> None:
+    """Set resolved_at on all active alerts for a competitor URL."""
+    alerts = await active_alerts_for_url(session, competitor_url_id)
     now = datetime.now(tz=timezone.utc)
     for alert in alerts:
         alert.resolved_at = now

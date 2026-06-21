@@ -84,11 +84,19 @@ async def dispatch_on_snapshot(
     Does NOT call session.commit() — the API handler owns the transaction.
     `redis_client` is retained in the signature for ingest-contract stability.
     """
+    # Capture alerts that are about to be resolved BEFORE detect_and_write resolves
+    # them, so a back-in-stock transition can be emailed as a restock.
+    restocking = (
+        await oos_detector.active_alerts_for_url(session, competitor_url_id)
+        if current_in_stock else []
+    )
     new_alerts = await oos_detector.detect_and_write(
         session, competitor_url_id, snapshot_id, current_in_stock
     )
     if new_alerts:
         await _notify_oos_alerts(session, new_alerts)
+    elif restocking:
+        await _notify_restock_alerts(session, restocking)
 
 
 async def generate_cycle_signals(
@@ -326,6 +334,11 @@ async def _notify_signal(
         sku_title=sku.title, signal_type=signal.type,
         dedup_key=f"signal:{sku.id}:{signal.type}:{hour}",
     )
+    # Email the same actionable signal (best-effort), gated by the merchant's email
+    # preference + a recorded recipient. Signals are Redis-deduped 1h per sku+type,
+    # so this is at most one email per product per signal type per hour.
+    if merchant.email_notifications_enabled and merchant.notification_email:
+        await email.send_signal_alert_email(merchant.notification_email, sku.title, signal.type)
 
 
 # ── F5 OOS email notification (best-effort) ──────────────────────────────────
@@ -390,6 +403,30 @@ async def _competitor_name(
         return "A competitor"
     cu = await session.get(CompetitorURL, tracking.competitor_url_id)
     return (cu.domain if cu and cu.domain else "A competitor")
+
+
+async def _notify_restock_alerts(session: AsyncSession, alerts: list[OOSAlert]) -> None:
+    """Email each merchant whose competitor just came back in stock. Best-effort and
+    email-pref-gated, mirroring _notify_oos_alerts. De-duplicated by SKU so multiple
+    resolved alerts for the same product don't send multiple restock emails."""
+    seen: set[uuid.UUID] = set()
+    for alert in alerts:
+        try:
+            if alert.sku_id in seen:
+                continue
+            seen.add(alert.sku_id)
+            sku = await session.get(SKU, alert.sku_id)
+            if sku is None:
+                continue
+            merchant = await session.get(Merchant, sku.merchant_id)
+            if merchant is None or not merchant.email_notifications_enabled:
+                continue
+            recipient = merchant.notification_email
+            if not recipient:
+                continue
+            await email.send_restock_alert_email(recipient, sku.title)
+        except Exception:  # noqa: BLE001 — never let notification break the pipeline
+            logger.exception("Failed to send restock email for alert %s", getattr(alert, "id", "?"))
 
 
 # ── F7 auto-reprice trigger (best-effort) ────────────────────────────────────

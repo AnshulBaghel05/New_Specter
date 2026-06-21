@@ -117,6 +117,35 @@ class TestNotificationTriggers:
         assert m.await_args.kwargs["competitor_domain"] == "rivalshop.com"
         assert m.await_args.kwargs["sku_title"] == "Blue Widget"
 
+    def test_signal_email_sent_for_raise_when_email_on(self):
+        merchant = MagicMock(); merchant.id = uuid.uuid4(); merchant.plan = "recon"
+        merchant.email_notifications_enabled = True
+        merchant.notification_email = "m@x.com"
+        sku = MagicMock(); sku.id = uuid.uuid4(); sku.title = "Widget"
+        sig = MagicMock(); sig.type = "RAISE"
+        with patch.object(dispatcher.notifications, "notify_signal", new=AsyncMock()), \
+             patch.object(dispatcher.email, "send_signal_alert_email", new=AsyncMock()) as m:
+            asyncio.run(dispatcher._notify_signal(MagicMock(), merchant, sku, sig))
+        m.assert_awaited_once_with("m@x.com", "Widget", "RAISE")
+
+    def test_signal_email_skipped_when_email_off(self):
+        merchant = MagicMock(); merchant.id = uuid.uuid4(); merchant.plan = "recon"
+        merchant.email_notifications_enabled = False
+        merchant.notification_email = "m@x.com"
+        sku = MagicMock(); sku.id = uuid.uuid4(); sku.title = "Widget"
+        sig = MagicMock(); sig.type = "LOWER"
+        with patch.object(dispatcher.notifications, "notify_signal", new=AsyncMock()), \
+             patch.object(dispatcher.email, "send_signal_alert_email", new=AsyncMock()) as m:
+            asyncio.run(dispatcher._notify_signal(MagicMock(), merchant, sku, sig))
+        m.assert_not_awaited()
+
+    def test_restock_emails_merchant(self):
+        sess, alert = _oos_world(domain="rivalshop.com")
+        with patch.object(dispatcher.email, "send_restock_alert_email", new=AsyncMock(return_value=True)) as m:
+            asyncio.run(dispatcher._notify_restock_alerts(sess, [alert]))
+        m.assert_awaited_once()
+        assert m.await_args.args[1] == "Blue Widget"   # sku_title
+
 
 # ── _notify_oos_alerts ────────────────────────────────────────────────────────
 
