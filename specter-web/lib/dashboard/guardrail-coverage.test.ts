@@ -8,7 +8,7 @@ function sug(p: Partial<LatestSuggestion> = {}): LatestSuggestion {
 function sku(p: Partial<RepriceSKU> = {}): RepriceSKU {
   return {
     id: 's', title: 'Widget', current_price: 100,
-    floor_price: null, ceiling_price: null,
+    floor_price: null, ceiling_price: null, currency: 'USD',
     auto_reprice_enabled: false, latest_suggestion: null,
     ...p,
   }

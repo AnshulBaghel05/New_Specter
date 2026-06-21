@@ -22,6 +22,7 @@ def _make_sku() -> MagicMock:
     sku.current_price = Decimal("100")
     sku.floor_price = Decimal("80")
     sku.ceiling_price = Decimal("140")
+    sku.currency = "USD"
     return sku
 
 

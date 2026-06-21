@@ -17,6 +17,7 @@ import RepriceCoverage from '@/components/dashboard/reprice-coverage'
 import EmptyState from '@/components/dashboard/empty-state'
 import { timeAgo } from '@/lib/time-ago'
 import { cn } from '@/lib/utils'
+import { formatMoney } from '@/lib/currency'
 import { toast } from '@/lib/toast'
 import { useQueryParams } from '@/lib/dashboard/use-query-params'
 import { parseRepriceFilter, parseRepriceSort, parseSearchQuery } from '@/lib/dashboard/url-params'
@@ -357,7 +358,7 @@ function SKURow({
             {sku.latest_suggestion.price_suggestion !== null && (
               <span className="flex items-center gap-1 font-mono text-xs text-primary">
                 <Sparkles size={11} />
-                ${sku.latest_suggestion.price_suggestion.toFixed(2)}
+                {formatMoney(sku.latest_suggestion.price_suggestion, sku.currency)}
               </span>
             )}
             <ConfidenceMeter confidence={sku.latest_suggestion.confidence} />
@@ -366,11 +367,11 @@ function SKURow({
       </div>
 
       {/* Projected price preview */}
-      <RepricePreviewChip preview={preview} currentPrice={sku.current_price} />
+      <RepricePreviewChip preview={preview} currentPrice={sku.current_price} currency={sku.currency} />
 
       <div className="flex items-end gap-3 flex-wrap">
         <span className="font-mono text-xs text-muted">
-          Current: {sku.current_price !== null ? `$${sku.current_price.toFixed(2)}` : '—'}
+          Current: {formatMoney(sku.current_price, sku.currency)}
         </span>
         <Bound label="Floor" value={floor} onChange={setFloor} inputRef={floorRef} />
         <Bound label="Ceiling" value={ceiling} onChange={setCeiling} inputRef={ceilingRef} />

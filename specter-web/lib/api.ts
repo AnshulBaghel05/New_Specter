@@ -80,6 +80,7 @@ export interface SKU {
   current_price: string | null
   floor_price: string | null
   ceiling_price: string | null
+  currency: string
   shopify_variant_id: string | null
   active: boolean
 }
@@ -414,6 +415,7 @@ export interface CreateSKUInput {
   title: string
   handle?: string
   current_price?: string
+  currency?: string
   shopify_variant_id?: string
 }
 
@@ -430,6 +432,7 @@ export function useCreateSKU(): UseMutationResult<SKU, ApiError, CreateSKUInput>
             current_price: body.current_price ?? null,
             floor_price: null,
             ceiling_price: null,
+            currency: body.currency ?? 'USD',
             shopify_variant_id: body.shopify_variant_id ?? null,
             active: true,
           })
@@ -447,6 +450,7 @@ export interface UpdateSKUInput {
   floor_price?: string
   ceiling_price?: string
   current_price?: string
+  currency?: string
   active?: boolean
 }
 
@@ -677,6 +681,7 @@ export interface RepriceSKU {
   current_price: number | null
   floor_price: number | null
   ceiling_price: number | null
+  currency: string
   auto_reprice_enabled: boolean
   latest_suggestion: LatestSuggestion | null
 }
@@ -825,6 +830,7 @@ export interface ProductCompetitor {
   silenced_oos: boolean
   robots_blocked: boolean
   latest_price: number | null
+  currency: string              // competitor's own scraped currency (not the product's)
   in_stock: boolean | null
   last_checked_at: string | null
   status: CompetitorStatus      // derived scrape health (see products.py)
@@ -843,6 +849,7 @@ export interface Product {
   title: string
   handle: string | null
   current_price: number | null
+  currency: string
   source: 'shopify' | 'manual'
   active: boolean
   floor_price: number | null

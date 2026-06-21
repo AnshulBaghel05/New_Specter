@@ -19,6 +19,9 @@ class SKU(Base):
     current_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
     floor_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
     ceiling_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
+    # ISO-4217 code the product's prices are denominated in. Competitor snapshot
+    # prices (price_snapshots.currency) are converted into this before signal math.
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, server_default=text("'USD'"))
     shopify_variant_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     # Per-SKU auto-reprice switch (F7 AC#7). Effective only when the merchant's

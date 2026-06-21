@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from dataclasses import replace
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional
@@ -26,7 +27,7 @@ from models.oos_alerts import OOSAlert
 from models.price_snapshots import PriceSnapshot
 from models.signals import Signal
 from models.skus import SKU
-from services import email, repricer
+from services import email, fx, repricer
 from signals import oos_detector
 from signals.rule_engine import CompetitorDataPoint, SignalResult, compute_signal
 
@@ -139,6 +140,11 @@ async def generate_cycle_signals(
     plan = (merchant.plan or "recon").lower()
     eclipse_interval_s = (merchant.eclipse_interval_ms or 300_000) // 1_000
 
+    # One FX table for the whole cycle (Redis-cached live rates over a static
+    # fallback — never a per-product network call). Competitor snapshot prices are
+    # normalized into each product's currency before any signal math.
+    fx_rates = fx.get_usd_rates(redis_client)
+
     skus_and_data: list[tuple[SKU, list[CompetitorDataPoint]]] = []
     for own_product_id, product_trackings in trackings_by_product.items():
         sku = await session.get(SKU, own_product_id)
@@ -146,6 +152,7 @@ async def generate_cycle_signals(
             continue
         data_points = await _build_data_points(product_trackings, url_by_id, snap_by_url)
         if data_points:
+            data_points = _normalize_points_to_sku(data_points, sku.currency, fx_rates)
             skus_and_data.append((sku, data_points))
 
     if not skus_and_data:
@@ -171,6 +178,25 @@ async def generate_cycle_signals(
             if result:
                 await _write_signal(session, redis_client, sku, result,
                                     source="rule", ai_fallback=False)
+
+
+def _normalize_points_to_sku(
+    data_points: list[CompetitorDataPoint],
+    sku_currency: Optional[str],
+    rates: dict[str, float],
+) -> list[CompetitorDataPoint]:
+    """Convert every competitor data point into the product's currency so the rule/
+    AI engines compare like-for-like. A point whose scraped currency can't be mapped
+    is passed through unchanged (never drops a competitor or breaks the cycle)."""
+    target = (sku_currency or fx.DEFAULT_CURRENCY).upper()
+    out: list[CompetitorDataPoint] = []
+    for dp in data_points:
+        try:
+            price = fx.convert(dp.price, dp.currency or target, target, rates)
+        except fx.UnsupportedCurrency:
+            price = dp.price
+        out.append(replace(dp, price=price, currency=target))
+    return out
 
 
 # ── Data assembly helpers ─────────────────────────────────────────────────────

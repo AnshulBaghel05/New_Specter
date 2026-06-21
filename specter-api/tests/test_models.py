@@ -30,7 +30,7 @@ def test_sku_tablename_and_columns():
     cols = {c.key for c in mapper.columns}
     assert SKU.__tablename__ == "skus"
     assert {"id", "created_at", "merchant_id", "title", "handle",
-            "current_price", "floor_price", "ceiling_price",
+            "current_price", "floor_price", "ceiling_price", "currency",
             "shopify_variant_id", "active", "auto_reprice_enabled"} == cols
 
 

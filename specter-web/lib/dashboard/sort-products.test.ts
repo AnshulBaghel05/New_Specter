@@ -3,7 +3,7 @@ import { sortProducts } from './sort-products'
 import type { Product } from '@/lib/api'
 
 const p = (id: string, type: 'RAISE'|'LOWER'|'HOLD'|null, conf = 0.5): Product => ({
-  id, title: id, handle: null, current_price: 1, source: 'manual', active: true,
+  id, title: id, handle: null, current_price: 1, currency: 'USD', source: 'manual', active: true,
   floor_price: null, ceiling_price: null, competitor_count: 0, competitors: [],
   latest_signal: type ? { type, price_suggestion: null, confidence: conf, created_at: '2026-05-31T00:00:00Z' } : null,
 })

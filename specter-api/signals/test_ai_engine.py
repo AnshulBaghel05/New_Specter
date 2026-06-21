@@ -46,6 +46,7 @@ def _make_sku(
     floor_price: Optional[float] = 80.0,
     ceiling_price: Optional[float] = 140.0,
     active: bool = True,
+    currency: str = "USD",
 ) -> MagicMock:
     sku = MagicMock()
     sku.id = uuid.uuid4()
@@ -54,6 +55,7 @@ def _make_sku(
     sku.floor_price = Decimal(str(floor_price)) if floor_price is not None else None
     sku.ceiling_price = Decimal(str(ceiling_price)) if ceiling_price is not None else None
     sku.active = active
+    sku.currency = currency
     return sku
 
 
@@ -644,3 +646,20 @@ class TestPromptConstruction:
         data = _make_data_points([(110.0, True)])
         entry = _build_sku_entry(sku, data)
         assert entry["sku_id"] == str(sku.id)
+
+    def test_sku_entry_carries_product_currency(self):
+        sku = _make_sku(currency="EUR")
+        data = _make_data_points([(110.0, True)])
+        entry = _build_sku_entry(sku, data)
+        assert entry["currency"] == "EUR"
+
+    def test_prompt_states_prices_are_per_sku_currency(self):
+        from signals.ai_engine import _build_prompt
+        sku = _make_sku(currency="GBP")
+        data = _make_data_points([(110.0, True)])
+        prompt = _build_prompt([(sku, data)])
+        # The old global "Merchant currency: USD" assumption is gone; the prompt now
+        # tells the model each SKU's prices are in that SKU's own currency field.
+        assert "Merchant currency: USD" not in prompt
+        assert "currency" in prompt
+        assert "GBP" in prompt

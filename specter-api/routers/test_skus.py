@@ -17,7 +17,29 @@ from db import get_db
 from main import app
 from models.merchants import Merchant
 from models.skus import SKU
-from routers.skus import cascade_delete_sku
+from routers.skus import SKUCreate, SKUPatch, cascade_delete_sku
+
+
+# ── Currency validation on the SKU schemas ──────────────────────────────────────
+
+def test_sku_create_defaults_currency_to_usd():
+    assert SKUCreate(title="X").currency == "USD"
+
+
+def test_sku_create_uppercases_and_accepts_supported_currency():
+    assert SKUCreate(title="X", currency="eur").currency == "EUR"
+
+
+def test_sku_create_rejects_unsupported_currency():
+    with pytest.raises(ValueError):
+        SKUCreate(title="X", currency="ZZZ")
+
+
+def test_sku_patch_currency_optional_and_validated():
+    assert SKUPatch().currency is None
+    assert SKUPatch(currency="gbp").currency == "GBP"
+    with pytest.raises(ValueError):
+        SKUPatch(currency="NOPE")
 
 
 # ── Fake async session that records DELETE ordering ─────────────────────────────

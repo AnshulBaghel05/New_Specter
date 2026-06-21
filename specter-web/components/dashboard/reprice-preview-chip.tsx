@@ -1,5 +1,6 @@
 import type { RepricePreview, RepriceState } from '@/lib/dashboard/reprice-preview'
 import { formatPriceDelta } from '@/lib/dashboard/price-delta'
+import { formatMoney } from '@/lib/currency'
 import { cn } from '@/lib/utils'
 
 const LABEL: Record<RepriceState, string> = {
@@ -21,9 +22,11 @@ const STYLE: Record<RepriceState, string> = {
 export default function RepricePreviewChip({
   preview,
   currentPrice,
+  currency,
 }: {
   preview: RepricePreview
   currentPrice: number | null
+  currency?: string
 }) {
   const { state, effectivePrice } = preview
   if (state === 'no-action') {
@@ -42,7 +45,7 @@ export default function RepricePreviewChip({
       </span>
       {effectivePrice !== null && (
         <span className="font-mono text-xs text-text tabular-nums">
-          → ${effectivePrice.toFixed(2)}
+          → {formatMoney(effectivePrice, currency)}
           {delta && <span className="text-muted"> ({delta})</span>}
         </span>
       )}

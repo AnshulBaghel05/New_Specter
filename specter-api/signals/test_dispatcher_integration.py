@@ -328,6 +328,7 @@ class TestGenerateCycleSignals:
         merchant = MagicMock(); merchant.id = merchant_id; merchant.plan = "cipher"
         merchant.eclipse_interval_ms = 300_000
         sku = MagicMock(); sku.id = own_product_id; sku.active = True; sku.current_price = D("100.00")
+        sku.currency = "USD"
 
         def getter(model, id_):
             return {Merchant: merchant, SKU: sku}.get(model)
@@ -351,6 +352,7 @@ class TestGenerateCycleSignals:
         merchant = MagicMock(); merchant.id = merchant_id; merchant.plan = "recon"
         merchant.eclipse_interval_ms = 300_000
         sku = MagicMock(); sku.id = own_product_id; sku.active = True; sku.current_price = D("100.00")
+        sku.currency = "USD"
 
         def getter(model, id_):
             return {Merchant: merchant, SKU: sku}.get(model)
@@ -366,6 +368,38 @@ class TestGenerateCycleSignals:
             asyncio.run(dispatcher.generate_cycle_signals(sess, MagicMock(), merchant_id))
         write.assert_awaited()
         reprice.assert_not_awaited()
+
+    def test_competitor_prices_normalized_to_sku_currency(self):
+        """A USD competitor price feeding a EUR product is converted to EUR (via the
+        FX service) BEFORE compute_signal — otherwise the comparison is garbage."""
+        merchant_id, own_product_id = uuid.uuid4(), uuid.uuid4()
+        tracking = MagicMock(); tracking.merchant_id = merchant_id
+        tracking.own_product_id = own_product_id
+        merchant = MagicMock(); merchant.id = merchant_id; merchant.plan = "recon"
+        merchant.eclipse_interval_ms = 300_000
+        sku = MagicMock(); sku.id = own_product_id; sku.active = True
+        sku.current_price = D("100.00"); sku.currency = "EUR"
+
+        def getter(model, id_):
+            return {Merchant: merchant, SKU: sku}.get(model)
+
+        sess = self._exec_session([tracking], getter)
+        data = [CompetitorDataPoint(tracking_id="t1", price=D("10"), in_stock=True, currency="USD")]
+        captured: dict = {}
+
+        def fake_compute(price, points):
+            captured["price"] = price
+            captured["points"] = points
+            return None  # no signal → no write
+
+        with patch.object(dispatcher, "_build_data_points", new=AsyncMock(return_value=data)), \
+             patch.object(dispatcher, "compute_signal", side_effect=fake_compute), \
+             patch.object(dispatcher.fx, "get_usd_rates", return_value={"USD": 1.0, "EUR": 2.0}):
+            asyncio.run(dispatcher.generate_cycle_signals(sess, MagicMock(), merchant_id))
+
+        assert captured["points"][0].price == D("20.00")     # 10 USD × (EUR 2/USD)
+        assert captured["points"][0].currency == "EUR"
+        assert captured["price"] == D("100.00")              # merchant price already EUR
 
     def test_unknown_merchant_is_noop(self):
         sess = self._exec_session([], lambda *a: None)  # session.get(Merchant, …) → None

@@ -318,7 +318,9 @@ async def _record_ai_usage(
 def _build_prompt(skus_and_data: list[tuple[SKU, list[CompetitorDataPoint]]]) -> str:
     sku_array = [_build_sku_entry(sku, data_points) for sku, data_points in skus_and_data]
     return (
-        "Merchant currency: USD\n"
+        "All prices for a SKU (merchant_price and every competitor price) are already "
+        "in that SKU's own currency, given in its `currency` field — compare them "
+        "directly and never convert.\n"
         "Analyze each SKU and return a JSON array with one object per SKU.\n\n"
         f"SKUs:\n{json.dumps(sku_array, indent=2)}\n\n"
         "Return JSON only. Schema per SKU: "
@@ -343,6 +345,7 @@ def _build_sku_entry(sku: SKU, data_points: list[CompetitorDataPoint]) -> dict:
     sku_entry: dict = {
         "sku_id":         str(sku.id),
         "title":          sku.title,
+        "currency":       (sku.currency or "USD"),
         "merchant_price": float(sku.current_price),
         "competitors":    competitors,
     }

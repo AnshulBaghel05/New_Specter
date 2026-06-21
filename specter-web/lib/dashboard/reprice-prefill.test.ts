@@ -9,6 +9,7 @@ function makeSku(overrides: Partial<RepriceSKU>): RepriceSKU {
     current_price: 39.99,
     floor_price: null,
     ceiling_price: null,
+    currency: 'USD',
     auto_reprice_enabled: false,
     latest_suggestion: null,
     ...overrides,

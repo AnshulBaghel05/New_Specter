@@ -50,6 +50,10 @@ class CompetitorRow(BaseModel):
     silenced_oos: bool
     robots_blocked: bool
     latest_price: Optional[Money]
+    # Currency the scraped competitor price is denominated in (its own, not the
+    # product's). The signal engine converts to the product currency for math; the
+    # UI shows the competitor's raw price labelled with this so nothing looks faked.
+    currency: str
     in_stock: Optional[bool]
     last_checked_at: Optional[str]
     # Per-URL scrape health, derived from DB state (no extra query): one of
@@ -101,6 +105,7 @@ class ProductOut(BaseModel):
     title: str
     handle: Optional[str]
     current_price: Optional[Money]
+    currency: str
     source: str
     active: bool
     floor_price: Optional[Money]
@@ -182,6 +187,8 @@ def assemble_products(
                 silenced_oos=t.silenced_oos,
                 robots_blocked=robots_blocked,
                 latest_price=snap.price if snap else None,
+                currency=(getattr(snap, "currency", None) if snap else None)
+                or getattr(sku, "currency", None) or "USD",
                 in_stock=snap.in_stock if snap else None,
                 last_checked_at=last_checked.isoformat() if last_checked else None,
                 status=status,
@@ -199,6 +206,7 @@ def assemble_products(
             title=sku.title,
             handle=sku.handle,
             current_price=sku.current_price,
+            currency=getattr(sku, "currency", None) or "USD",
             source="shopify" if sku.shopify_variant_id else "manual",
             active=sku.active,
             floor_price=sku.floor_price,

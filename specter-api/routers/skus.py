@@ -16,7 +16,7 @@ from decimal import Decimal
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,7 +31,19 @@ from models.price_changes import PriceChange
 from models.signals import Signal
 from models.skus import SKU
 from redis_client import redis as redis_client
+from services import fx
 from services.dispatcher import refresh_url_schedule
+
+
+def _validate_currency(value: Optional[str]) -> Optional[str]:
+    """Normalize to an upper-case ISO-4217 code we support, or 422. None passes
+    through (caller decides the default / leaves the field unchanged)."""
+    if value is None:
+        return None
+    code = value.strip().upper()
+    if not fx.is_supported(code):
+        raise ValueError(f"unsupported currency {value!r}")
+    return code
 
 # ── Pydantic schemas ──────────────────────────────────────────────────────────
 
@@ -43,6 +55,7 @@ class SKUOut(BaseModel):
     current_price: Optional[Decimal]
     floor_price: Optional[Decimal]
     ceiling_price: Optional[Decimal]
+    currency: str
     shopify_variant_id: Optional[str]
     active: bool
 
@@ -53,14 +66,26 @@ class SKUCreate(BaseModel):
     title: str
     handle: Optional[str] = None
     current_price: Optional[Decimal] = None
+    currency: str = "USD"
     shopify_variant_id: Optional[str] = None
+
+    @field_validator("currency")
+    @classmethod
+    def _ccy(cls, v: str) -> str:
+        return _validate_currency(v) or "USD"
 
 
 class SKUPatch(BaseModel):
     floor_price: Optional[Decimal] = None
     ceiling_price: Optional[Decimal] = None
     current_price: Optional[Decimal] = None
+    currency: Optional[str] = None
     active: Optional[bool] = None
+
+    @field_validator("currency")
+    @classmethod
+    def _ccy(cls, v: Optional[str]) -> Optional[str]:
+        return _validate_currency(v)
 
 
 class SKUCountOut(BaseModel):
@@ -158,6 +183,7 @@ async def create_sku(
         title=body.title,
         handle=body.handle,
         current_price=body.current_price,
+        currency=body.currency,
         shopify_variant_id=body.shopify_variant_id,
     )
     session.add(sku)
@@ -240,6 +266,8 @@ async def patch_sku(
         sku.ceiling_price = body.ceiling_price
     if body.current_price is not None:
         sku.current_price = body.current_price
+    if body.currency is not None:
+        sku.currency = body.currency
     if body.active is not None:
         sku.active = body.active
 

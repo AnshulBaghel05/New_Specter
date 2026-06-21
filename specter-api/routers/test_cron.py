@@ -106,3 +106,33 @@ def test_proxy_guard_wrong_token_rejected_401(client):
         resp = client.post("/internal/run-proxy-guard", headers={"Authorization": "Bearer nope"})
     assert resp.status_code == 401
     fake.assert_not_awaited()
+
+
+def test_fx_refresh_valid_token_caches_rates(client):
+    from unittest.mock import MagicMock
+    app.dependency_overrides[get_redis] = lambda: MagicMock()
+    with patch("routers.cron.fx.refresh_usd_rates",
+               return_value={"USD": 1.0, "EUR": 0.9}) as fake:
+        resp = client.post("/internal/run-fx-refresh", headers={"Authorization": f"Bearer {SECRET}"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ok" and body["refreshed"] is True and body["currencies"] == 2
+    fake.assert_called_once()
+
+
+def test_fx_refresh_reports_failure_without_error(client):
+    from unittest.mock import MagicMock
+    app.dependency_overrides[get_redis] = lambda: MagicMock()
+    with patch("routers.cron.fx.refresh_usd_rates", return_value=None):
+        resp = client.post("/internal/run-fx-refresh", headers={"Authorization": f"Bearer {SECRET}"})
+    assert resp.status_code == 200
+    assert resp.json()["refreshed"] is False
+
+
+def test_fx_refresh_wrong_token_rejected_401(client):
+    from unittest.mock import MagicMock
+    app.dependency_overrides[get_redis] = lambda: MagicMock()
+    with patch("routers.cron.fx.refresh_usd_rates") as fake:
+        resp = client.post("/internal/run-fx-refresh", headers={"Authorization": "Bearer nope"})
+    assert resp.status_code == 401
+    fake.assert_not_called()

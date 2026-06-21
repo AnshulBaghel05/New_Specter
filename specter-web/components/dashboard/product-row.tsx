@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { ChevronRight } from 'lucide-react'
 import type { Product } from '@/lib/api'
 import { cn } from '@/lib/utils'
+import { formatMoney } from '@/lib/currency'
 import { timeAgo } from '@/lib/time-ago'
 import CompetitorRowMenu from '@/components/dashboard/competitor-row-menu'
 import LinkCompetitorInline from '@/components/dashboard/link-competitor-inline'
@@ -25,7 +26,8 @@ const STATUS_LABEL: Record<string, string> = {
 export default function ProductRow({ product, maxCompetitors }: { product: Product; maxCompetitors: number | null }) {
   const [open, setOpen] = useState(false)
   const sig = product.latest_signal
-  const price = product.current_price != null ? `$${product.current_price.toFixed(2)}` : '—'
+  const ccy = product.currency
+  const price = formatMoney(product.current_price, ccy)
 
   return (
     <li className="bg-surface border border-border rounded-xl overflow-hidden">
@@ -48,7 +50,7 @@ export default function ProductRow({ product, maxCompetitors }: { product: Produ
             {sig && (
               <span className={cn('font-semibold', SIGNAL_TONE[sig.type])}>
                 {sig.type}
-                {sig.price_suggestion != null && ` → $${sig.price_suggestion.toFixed(2)}`}
+                {sig.price_suggestion != null && ` → ${formatMoney(sig.price_suggestion, ccy)}`}
                 {` (${Math.round(sig.confidence * 100)}%)`}
               </span>
             )}
@@ -67,8 +69,8 @@ export default function ProductRow({ product, maxCompetitors }: { product: Produ
           {product.competitors.map(c => (
             <div key={c.tracking_id} className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 font-mono text-xs">
               <span className="text-text truncate flex-1">{c.domain}</span>
-              <span className="text-muted w-16 text-right">
-                {c.latest_price != null ? `$${c.latest_price.toFixed(2)}` : '—'}
+              <span className="text-muted w-16 text-right" title={`Competitor price in ${c.currency}`}>
+                {formatMoney(c.latest_price, c.currency)}
               </span>
               <span className={cn('w-16 text-right', c.in_stock === false ? 'text-rose-400' : c.in_stock ? 'text-emerald-400' : 'text-muted/60')}>
                 {c.in_stock == null ? 'checking…' : c.in_stock ? 'in-stock' : 'OOS'}
@@ -91,7 +93,7 @@ export default function ProductRow({ product, maxCompetitors }: { product: Produ
           </div>
           <div className="pt-2 mt-1 border-t border-border/50 flex items-center justify-between gap-3 font-mono text-xs">
             <span className="text-muted">
-              floor {product.floor_price != null ? `$${product.floor_price.toFixed(2)}` : '—'} · ceiling {product.ceiling_price != null ? `$${product.ceiling_price.toFixed(2)}` : '—'}
+              floor {formatMoney(product.floor_price, ccy)} · ceiling {formatMoney(product.ceiling_price, ccy)}
             </span>
             <a href="/repricing" className="text-primary hover:underline">Auto-reprice →</a>
           </div>

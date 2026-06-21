@@ -47,6 +47,7 @@ class RepriceSKUOut(BaseModel):
     current_price: Optional[float]
     floor_price: Optional[float]
     ceiling_price: Optional[float]
+    currency: str
     auto_reprice_enabled: bool
     latest_suggestion: Optional[LatestSuggestion]
 
@@ -121,6 +122,7 @@ async def list_repricing(
             current_price=_to_float(s.current_price),
             floor_price=_to_float(s.floor_price),
             ceiling_price=_to_float(s.ceiling_price),
+            currency=getattr(s, "currency", None) or "USD",
             auto_reprice_enabled=s.auto_reprice_enabled,
             latest_suggestion=LatestSuggestion(
                 type=sig.type,
@@ -185,6 +187,7 @@ async def update_sku_reprice(
         current_price=_to_float(sku.current_price),
         floor_price=_to_float(sku.floor_price),
         ceiling_price=_to_float(sku.ceiling_price),
+        currency=getattr(sku, "currency", None) or "USD",
         auto_reprice_enabled=sku.auto_reprice_enabled,
         latest_suggestion=None,
     )

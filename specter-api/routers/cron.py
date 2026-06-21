@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from auth.cron_auth import require_cron_auth
 from db import get_db
 from redis_client import get_redis
+from services import fx
 from services.cost_ledger import flush_daily
 from services.proxy_guard import run_proxy_guard
 from services.retention import purge_expired_snapshots
@@ -78,3 +79,14 @@ async def trigger_proxy_guard(redis: Redis = Depends(get_redis)) -> dict:
     daily jobs (e.g. hourly) so a residential storm is caught the hour it starts."""
     result = await run_proxy_guard(redis, datetime.now(timezone.utc))
     return {"status": "ok", **result}
+
+
+@router.post("/run-fx-refresh")
+async def trigger_fx_refresh(redis: Redis = Depends(get_redis)) -> dict:
+    """Daily tick: pull live USD-base FX rates and cache them in Redis (24h TTL) so
+    the signal engine normalizes competitor prices on fresh rates. Best-effort and
+    self-healing — on any fetch failure the embedded static table stays in effect, so
+    a missed run only means slightly stale rates, never broken signals."""
+    rates = fx.refresh_usd_rates(redis)
+    return {"status": "ok", "refreshed": rates is not None,
+            "currencies": len(rates) if rates else 0}

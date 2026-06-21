@@ -13,6 +13,7 @@ function makeProduct(overrides: Partial<Product> = {}): Product {
     title: 'Wireless Earbuds',
     handle: null,
     current_price: null,
+    currency: 'USD',
     source: 'manual',
     active: true,
     floor_price: null,
