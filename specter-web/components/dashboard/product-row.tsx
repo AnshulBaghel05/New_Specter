@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import Link from 'next/link'
 import { ChevronRight } from 'lucide-react'
 import type { Product } from '@/lib/api'
 import { cn } from '@/lib/utils'
@@ -95,7 +96,7 @@ export default function ProductRow({ product, maxCompetitors }: { product: Produ
             <span className="text-muted">
               floor {formatMoney(product.floor_price, ccy)} · ceiling {formatMoney(product.ceiling_price, ccy)}
             </span>
-            <a href="/repricing" className="text-primary hover:underline">Auto-reprice →</a>
+            <Link href="/repricing" className="text-primary hover:underline">Auto-reprice →</Link>
           </div>
           <div className="pt-1 flex justify-end">
             <DeleteProductButton

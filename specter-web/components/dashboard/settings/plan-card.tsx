@@ -1,10 +1,12 @@
 'use client'
 
+import { useState } from 'react'
 import { Zap } from 'lucide-react'
 import { planMeta } from '@/lib/dashboard/plan-meta'
 import { daysLeft } from '@/lib/dashboard/trial'
 import { cn } from '@/lib/utils'
 import SettingsCard from './settings-card'
+import ChangePlanOverlay from './change-plan-overlay'
 
 export default function PlanCard({
   plan,
@@ -20,6 +22,7 @@ export default function PlanCard({
   const meta = planMeta(plan)
   const isFree = plan === 'free'
   const trial = daysLeft(trialEndsAt)
+  const [planOpen, setPlanOpen] = useState(false)
 
   return (
     <SettingsCard title="Plan">
@@ -54,18 +57,25 @@ export default function PlanCard({
           )}
         </div>
         {isFree ? (
-          <a
-            href="/pricing"
+          <button
+            type="button"
+            onClick={() => setPlanOpen(true)}
             className="gradient-primary-cta btn-ripple px-5 py-2.5 rounded-xl font-semibold text-sm shrink-0"
           >
             Start 14-day trial
-          </a>
+          </button>
         ) : (
-          <a href="/pricing" className="font-body text-sm text-primary hover:underline shrink-0">
+          <button
+            type="button"
+            onClick={() => setPlanOpen(true)}
+            className="font-body text-sm text-primary hover:underline shrink-0"
+          >
             Change plan
-          </a>
+          </button>
         )}
       </div>
+
+      <ChangePlanOverlay open={planOpen} onClose={() => setPlanOpen(false)} currentPlan={plan} />
     </SettingsCard>
   )
 }

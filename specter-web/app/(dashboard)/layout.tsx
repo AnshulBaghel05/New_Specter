@@ -21,9 +21,12 @@ import { useResumeIntent } from '@/hooks/use-resume-intent'
 import { identifyMerchant } from '@/lib/analytics'
 import { cn } from '@/lib/utils'
 
-const WORKSPACE_NAV = { href: '/workspace', label: 'Workspace', icon: LayoutGrid }
-
-const PLATFORM_NAV = [
+// A SINGLE, STABLE nav order for every plan. The order must not depend on async
+// state (e.g. the merchant's plan): if it did, the list would render one order on
+// first paint (while `merchant` is still loading) and reorder once the query
+// resolves — the nav tags visibly jumping up/down on load. Free accounts still see
+// every tab (platform tabs render their preview/demo state), just in a fixed order.
+const NAV = [
   { href: '/dashboard', label: 'Overview', icon: LayoutDashboard },
   { href: '/signals', label: 'Signals', icon: Radio },
   { href: '/competitors', label: 'Competitors', icon: Globe },
@@ -31,9 +34,9 @@ const PLATFORM_NAV = [
   { href: '/alerts', label: 'Alerts', icon: BellRing },
   { href: '/repricing', label: 'Repricing', icon: SlidersHorizontal },
   { href: '/attribution', label: 'Attribution', icon: TrendingUp },
+  { href: '/workspace', label: 'Workspace', icon: LayoutGrid },
+  { href: '/settings', label: 'Settings', icon: Settings },
 ]
-
-const SETTINGS_NAV = { href: '/settings', label: 'Settings', icon: Settings }
 
 export default function DashboardLayout({
   children,
@@ -48,20 +51,14 @@ export default function DashboardLayout({
   const { data: summary } = useSignalSummary()
   const activeOos = summary?.active_oos_count ?? 0
 
-  // Plan-aware ordering: free users live in the Workspace, so it leads; paid
-  // users live in the live platform, so it leads. Every item stays visible —
-  // platform tabs render their preview/demo state for free, never a blank wall.
+  // Merchant is loaded only for analytics identity now — NOT for nav ordering,
+  // which is fixed (see NAV) so the tabs never reshuffle on load.
   const { data: merchant } = useMerchant()
 
   // Attach merchant_id (+ plan) to every PostHog event once the merchant loads.
   useEffect(() => {
     if (merchant?.id) identifyMerchant(merchant.id, merchant.plan)
   }, [merchant?.id, merchant?.plan])
-
-  const isFree = merchant?.plan === 'free' || merchant === undefined
-  const NAV = isFree
-    ? [WORKSPACE_NAV, ...PLATFORM_NAV, SETTINGS_NAV]
-    : [...PLATFORM_NAV, WORKSPACE_NAV, SETTINGS_NAV]
 
   async function signOut() {
     try {

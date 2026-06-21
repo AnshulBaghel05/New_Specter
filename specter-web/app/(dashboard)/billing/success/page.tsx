@@ -6,6 +6,7 @@
  * plan leaves `free` (or a short timeout), then route to the dashboard.
  */
 import { useEffect, useRef, useState } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useQueryClient } from '@tanstack/react-query'
 import { CheckCircle2, Loader2 } from 'lucide-react'
@@ -70,9 +71,9 @@ export default function BillingSuccessPage() {
           <p className="font-body text-sm text-muted max-w-sm">
             Your plan is being activated. Refresh in a minute or head to your dashboard.
           </p>
-          <a href="/dashboard" className="gradient-primary-cta btn-ripple px-5 py-2.5 rounded-xl font-semibold text-sm">
+          <Link href="/dashboard" className="gradient-primary-cta btn-ripple px-5 py-2.5 rounded-xl font-semibold text-sm">
             Go to dashboard
-          </a>
+          </Link>
         </>
       )}
     </div>
