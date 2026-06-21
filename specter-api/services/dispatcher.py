@@ -173,6 +173,34 @@ async def claim_due_urls(session: AsyncSession, now: datetime, limit: int) -> li
     return list((await session.execute(stmt)).scalars().all())
 
 
+async def select_unscheduled_tracked_urls(
+    session: AsyncSession, now: datetime, limit: int
+) -> list[CompetitorURL]:
+    """URLs that SHOULD be scheduled but aren't: next_run_at IS NULL, not robots-
+    blocked, yet have at least one enabled tracking. claim_due_urls only ever sees
+    rows with next_run_at set, so without this seam a URL that lands in this state —
+    legacy/seed rows created before refresh_url_schedule was wired, or any row whose
+    schedule was cleared and never recomputed — would stay 'pending' forever and
+    never dispatch. The EXISTS guard keeps genuinely-untracked URLs out of the set
+    (they're correctly left unscheduled)."""
+    stmt = (
+        select(CompetitorURL)
+        .where(
+            CompetitorURL.next_run_at.is_(None),
+            CompetitorURL.robots_blocked.is_(False),
+            select(CompetitorTracking.id)
+            .where(
+                CompetitorTracking.competitor_url_id == CompetitorURL.id,
+                CompetitorTracking.enabled.is_(True),
+            )
+            .exists(),
+        )
+        .limit(limit)
+        .with_for_update(skip_locked=True)
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
 async def enabled_trackings_for_url(session: AsyncSession, cu_id: uuid.UUID) -> list[TrackerRow]:
     stmt = (
         select(
@@ -211,6 +239,28 @@ async def refresh_url_schedule(
     cu.interval_ms = interval
     cu.phase_offset_ms = offset
     cu.next_run_at = first_run_at(now, interval, offset)
+
+
+async def heal_unscheduled_urls(
+    session: AsyncSession, redis_client: Redis, now: datetime, limit: int = 500
+) -> int:
+    """Recompute the schedule for any tracked URL stuck with next_run_at NULL.
+
+    This is the self-heal that makes prices flow for legacy/seed data and closes any
+    future window where a URL's schedule was lost: each tick re-derives interval/
+    phase/next_run_at from the URL's current enabled trackings. Idempotent — once
+    scheduled the row is no longer NULL so it drops out of the candidate set; the
+    rare row whose trackings vanished mid-heal is left paused (next_run_at NULL) and
+    not counted as healed. Only commits when something actually changed."""
+    candidates = await select_unscheduled_tracked_urls(session, now, limit)
+    healed = 0
+    for cu in candidates:
+        await refresh_url_schedule(session, redis_client, cu, now)
+        if cu.next_run_at is not None:
+            healed += 1
+    if candidates:
+        await session.commit()
+    return healed
 
 
 # ── The tick ───────────────────────────────────────────────────────────────────
@@ -282,5 +332,13 @@ async def tick(
     plan intervals the cycle keys don't yet encode their interval, so a single-
     interval sweep would mis-deadline cross-plan cycles. Self-healing covers the
     rare lost-job case — the next cycle recomputes every signal from the full set.
+
+    Before dispatching we heal any tracked URL stuck with no schedule (next_run_at
+    NULL) so legacy/seed rows that claim_due_urls can never see start flowing. Healed
+    rows get a FUTURE next_run_at (next phase slot), so they're picked up by a later
+    tick's dispatch — same timing as a freshly-added competitor.
     """
-    return await dispatch_due(session, redis_client, store, now, limit, grace_ms)
+    healed = await heal_unscheduled_urls(session, redis_client, now, limit=max(limit, 500))
+    result = await dispatch_due(session, redis_client, store, now, limit, grace_ms)
+    result["healed"] = healed
+    return result

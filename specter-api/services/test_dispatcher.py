@@ -9,7 +9,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import services.dispatcher as disp
 from services.dispatcher import (
-    TrackerRow, dispatch_due, fastest_plan, plan_dispatch, queue_for_class, read_streak)
+    TrackerRow, dispatch_due, fastest_plan, heal_unscheduled_urls, plan_dispatch,
+    queue_for_class, read_streak, tick)
 from services.scrape_scheduler import PLAN_INTERVALS_MS, PLAN_MAX_INTERVALS_MS
 
 NOW = datetime(2026, 6, 9, 12, 0, 0, tzinfo=timezone.utc)
@@ -160,3 +161,67 @@ def test_dispatch_due_pauses_url_with_no_active_trackers(monkeypatch):
     assert result["dispatched"] == 0
     assert cu.next_run_at is None            # paused — no more wasted crawls
     enq.assert_not_called()
+
+
+# ── heal_unscheduled_urls — self-heal NULL-schedule rows so prices flow ─────────
+
+def test_heal_unscheduled_urls_schedules_tracked_url(monkeypatch):
+    # A URL with enabled trackings but next_run_at NULL (legacy/seed data) would
+    # never be claimed by claim_due_urls and stay 'pending' forever. Heal must
+    # recompute its schedule so it starts dispatching.
+    cu = FakeCU()
+    cu.next_run_at = None
+    cu.phase_offset_ms = None
+    cu.interval_ms = None
+    monkeypatch.setattr(disp, "select_unscheduled_tracked_urls", AsyncMock(return_value=[cu]))
+    monkeypatch.setattr(disp, "enabled_trackings_for_url", AsyncMock(return_value=[_row(M1, "recon")]))
+    redis = MagicMock(); redis.get.return_value = None
+    session = MagicMock(); session.commit = AsyncMock()
+
+    healed = asyncio.run(heal_unscheduled_urls(session, redis, NOW))
+
+    assert healed == 1
+    assert cu.next_run_at is not None and cu.next_run_at > NOW
+    assert cu.interval_ms == PLAN_INTERVALS_MS["recon"]
+    session.commit.assert_awaited_once()
+
+
+def test_heal_unscheduled_urls_skips_when_trackings_vanished(monkeypatch):
+    # Race: tracking disabled between the SELECT and the refresh — refresh clears
+    # next_run_at and the row must NOT be counted as healed.
+    cu = FakeCU()
+    cu.next_run_at = None
+    monkeypatch.setattr(disp, "select_unscheduled_tracked_urls", AsyncMock(return_value=[cu]))
+    monkeypatch.setattr(disp, "enabled_trackings_for_url", AsyncMock(return_value=[]))
+    redis = MagicMock(); redis.get.return_value = None
+    session = MagicMock(); session.commit = AsyncMock()
+
+    healed = asyncio.run(heal_unscheduled_urls(session, redis, NOW))
+
+    assert healed == 0
+    assert cu.next_run_at is None
+
+
+def test_heal_unscheduled_urls_noop_commits_nothing_when_none(monkeypatch):
+    monkeypatch.setattr(disp, "select_unscheduled_tracked_urls", AsyncMock(return_value=[]))
+    redis = MagicMock(); redis.get.return_value = None
+    session = MagicMock(); session.commit = AsyncMock()
+
+    healed = asyncio.run(heal_unscheduled_urls(session, redis, NOW))
+
+    assert healed == 0
+    session.commit.assert_not_awaited()      # nothing changed — no write
+
+
+def test_tick_heals_before_dispatching(monkeypatch):
+    cu = FakeCU()
+    rows = [_row(M1, "recon")]
+    _patch_db(monkeypatch, cu, rows)
+    monkeypatch.setattr(disp, "select_unscheduled_tracked_urls", AsyncMock(return_value=[]))
+    redis = MagicMock(); redis.get.return_value = None
+    session = MagicMock(); session.commit = AsyncMock()
+
+    result = asyncio.run(tick(session, redis, FakeStore(), NOW))
+
+    assert result["claimed"] == 1 and result["dispatched"] == 1
+    assert result["healed"] == 0
