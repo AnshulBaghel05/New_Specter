@@ -11,19 +11,27 @@ Routes:
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth.plan_gate import competitor_limit_for, plan_gate, plan_max_skus
 from auth.supabase import get_current_merchant
 from db import get_db
+from models.competitor_trackings import CompetitorTracking
+from models.competitor_urls import CompetitorURL
 from models.merchants import Merchant
+from models.oos_alerts import OOSAlert
+from models.price_changes import PriceChange
+from models.signals import Signal
 from models.skus import SKU
+from redis_client import redis as redis_client
+from services.dispatcher import refresh_url_schedule
 
 # ── Pydantic schemas ──────────────────────────────────────────────────────────
 
@@ -156,6 +164,63 @@ async def create_sku(
     await session.commit()
     await session.refresh(sku)
     return SKUOut.model_validate(sku)
+
+
+async def cascade_delete_sku(session: AsyncSession, redis_client, sku: SKU) -> dict:
+    """Hard-delete a product and everything that hangs off it.
+
+    Rows are removed children-first so no foreign key is ever violated:
+      price_changes (→ signals, skus) → signals (→ skus) →
+      oos_alerts (→ competitor_trackings, skus) → competitor_trackings (→ skus) → sku
+
+    The competitor URLs this product tracked are captured BEFORE the trackings are
+    deleted, then each has its schedule recomputed from whatever enabled trackings
+    remain (other products/merchants). refresh_url_schedule clears next_run_at when
+    none remain, so a URL nobody tracks anymore stops being scraped — no wasted
+    crawls. SKU *usage* is derived live from enabled competitor_trackings (see
+    GET /skus/count), so removing the trackings here is the usage recalculation;
+    there is no stored counter to adjust."""
+    sku_id = sku.id
+
+    affected_url_ids = set((await session.execute(
+        select(CompetitorTracking.competitor_url_id)
+        .where(CompetitorTracking.own_product_id == sku_id)
+    )).scalars().all())
+
+    await session.execute(delete(PriceChange).where(PriceChange.sku_id == sku_id))
+    await session.execute(delete(Signal).where(Signal.sku_id == sku_id))
+    await session.execute(delete(OOSAlert).where(OOSAlert.sku_id == sku_id))
+    await session.execute(delete(CompetitorTracking).where(CompetitorTracking.own_product_id == sku_id))
+    await session.delete(sku)
+    await session.flush()
+
+    now = datetime.now(timezone.utc)
+    for url_id in affected_url_ids:
+        cu = await session.get(CompetitorURL, url_id)
+        if cu is not None:
+            await refresh_url_schedule(session, redis_client, cu, now)
+
+    await session.commit()
+    return {"competitor_urls_rescheduled": len(affected_url_ids)}
+
+
+@router.delete("/{sku_id}", status_code=status.HTTP_204_NO_CONTENT,
+               response_class=Response)
+async def delete_sku(
+    sku_id: uuid.UUID,
+    merchant: Merchant = Depends(get_current_merchant),
+    session: AsyncSession = Depends(get_db),
+) -> Response:
+    """Permanently delete a product and all of its trackings, signals, alerts and
+    price history (cascade). Irreversible — the frontend gates this behind a typed
+    confirmation. Returns 404 (not 403) for a row the caller doesn't own so the
+    endpoint never leaks the existence of another merchant's product."""
+    sku = await session.get(SKU, sku_id)
+    if sku is None or sku.merchant_id != merchant.id:
+        raise HTTPException(status_code=404, detail={"error": "sku_not_found"})
+
+    await cascade_delete_sku(session, redis_client, sku)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.patch("/{sku_id}", response_model=SKUOut)

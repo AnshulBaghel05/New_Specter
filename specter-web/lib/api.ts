@@ -471,6 +471,26 @@ export function useUpdateSKU(): UseMutationResult<SKU, ApiError, UpdateSKUInput>
   })
 }
 
+/**
+ * Permanently delete a product. The API cascades (trackings, signals, alerts,
+ * price history) and reschedules the competitor URLs that lose their last
+ * tracking. Irreversible — callers MUST gate this behind a typed confirmation.
+ */
+export function useDeleteSKU(): UseMutationResult<void, ApiError, string> {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id) =>
+      PREVIEW
+        ? Promise.resolve(undefined as void)
+        : apiFetch<void>(`/skus/${id}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.skus })
+      qc.invalidateQueries({ queryKey: queryKeys.skuCount })
+      qc.invalidateQueries({ queryKey: queryKeys.products })
+    },
+  })
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // COMPETITOR HOOKS
 // ════════════════════════════════════════════════════════════════════════════

@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils'
 import { timeAgo } from '@/lib/time-ago'
 import CompetitorRowMenu from '@/components/dashboard/competitor-row-menu'
 import LinkCompetitorInline from '@/components/dashboard/link-competitor-inline'
+import DeleteProductButton from '@/components/dashboard/delete-product-button'
 
 const SIGNAL_TONE: Record<string, string> = {
   RAISE: 'text-emerald-400', LOWER: 'text-rose-400', HOLD: 'text-amber-400',
@@ -93,6 +94,13 @@ export default function ProductRow({ product, maxCompetitors }: { product: Produ
               floor {product.floor_price != null ? `$${product.floor_price.toFixed(2)}` : '—'} · ceiling {product.ceiling_price != null ? `$${product.ceiling_price.toFixed(2)}` : '—'}
             </span>
             <a href="/repricing" className="text-primary hover:underline">Auto-reprice →</a>
+          </div>
+          <div className="pt-1 flex justify-end">
+            <DeleteProductButton
+              productId={product.id}
+              title={product.title}
+              competitorCount={product.competitor_count}
+            />
           </div>
         </div>
       )}
