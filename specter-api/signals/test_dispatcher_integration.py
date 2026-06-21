@@ -87,6 +87,37 @@ def _oos_world(*, email_on=True, recipient="merchant@example.com", domain="compe
     return sess, _alert(sku_id, tracking_id)
 
 
+# ── In-app notification triggers (Step 4 wiring) ─────────────────────────────
+
+class TestNotificationTriggers:
+    def test_notify_signal_fires_for_raise_and_lower(self):
+        merchant = MagicMock(); merchant.id = uuid.uuid4(); merchant.plan = "recon"
+        sku = MagicMock(); sku.id = uuid.uuid4(); sku.title = "Widget"
+        with patch.object(dispatcher.notifications, "notify_signal", new=AsyncMock()) as m:
+            for t in ("RAISE", "LOWER"):
+                sig = MagicMock(); sig.type = t
+                asyncio.run(dispatcher._notify_signal(MagicMock(), merchant, sku, sig))
+        assert m.await_count == 2
+
+    def test_notify_signal_skips_hold_and_dedup_suppressed(self):
+        merchant = MagicMock(); merchant.id = uuid.uuid4(); merchant.plan = "recon"
+        sku = MagicMock(); sku.id = uuid.uuid4(); sku.title = "Widget"
+        with patch.object(dispatcher.notifications, "notify_signal", new=AsyncMock()) as m:
+            hold = MagicMock(); hold.type = "HOLD"
+            asyncio.run(dispatcher._notify_signal(MagicMock(), merchant, sku, hold))
+            asyncio.run(dispatcher._notify_signal(MagicMock(), merchant, sku, None))  # dedup-suppressed
+        m.assert_not_awaited()
+
+    def test_oos_alert_creates_in_app_notification(self):
+        sess, alert = _oos_world(domain="rivalshop.com")
+        with patch.object(dispatcher.email, "send_oos_alert_email", new=AsyncMock(return_value=True)), \
+             patch.object(dispatcher.notifications, "notify_oos", new=AsyncMock()) as m:
+            asyncio.run(dispatcher._notify_oos_alerts(sess, [alert]))
+        m.assert_awaited_once()
+        assert m.await_args.kwargs["competitor_domain"] == "rivalshop.com"
+        assert m.await_args.kwargs["sku_title"] == "Blue Widget"
+
+
 # ── _notify_oos_alerts ────────────────────────────────────────────────────────
 
 class TestNotifyOOSAlerts:

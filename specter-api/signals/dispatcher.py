@@ -27,7 +27,7 @@ from models.oos_alerts import OOSAlert
 from models.price_snapshots import PriceSnapshot
 from models.signals import Signal
 from models.skus import SKU
-from services import email, fx, repricer
+from services import email, fx, notifications, repricer
 from signals import oos_detector
 from signals.rule_engine import CompetitorDataPoint, SignalResult, compute_signal
 
@@ -169,6 +169,10 @@ async def generate_cycle_signals(
             eclipse_interval_s=eclipse_interval_s,
             skus_and_data=skus_and_data,
         )
+        # In-app notification per newly-written actionable signal.
+        sku_by_id = {sku.id: sku for sku, _ in skus_and_data}
+        for sig in signals:
+            await _notify_signal(session, merchant, sku_by_id.get(getattr(sig, "sku_id", None)), sig)
         # Phase 2 — external F7 reprice PUTs, after every signal write succeeded.
         await _maybe_reprice(session, merchant, signals, skus_and_data)
     else:
@@ -176,8 +180,9 @@ async def generate_cycle_signals(
         for sku, data_points in skus_and_data:
             result = compute_signal(sku.current_price, data_points)
             if result:
-                await _write_signal(session, redis_client, sku, result,
-                                    source="rule", ai_fallback=False)
+                signal = await _write_signal(session, redis_client, sku, result,
+                                             source="rule", ai_fallback=False)
+                await _notify_signal(session, merchant, sku, signal)
 
 
 def _normalize_points_to_sku(
@@ -305,6 +310,24 @@ async def _write_signal(
     return signal
 
 
+async def _notify_signal(
+    session: AsyncSession, merchant: Merchant, sku: Optional[SKU], signal: Optional[Signal]
+) -> None:
+    """Create an in-app notification for a newly-written actionable signal.
+
+    Only RAISE/LOWER are surfaced (HOLD is non-actionable noise). `signal` is None
+    when the write was dedup-suppressed, so no notification fires for a repeat.
+    Best-effort — notify_signal swallows its own errors."""
+    if signal is None or sku is None or getattr(signal, "type", None) not in ("RAISE", "LOWER"):
+        return
+    hour = datetime.now(tz=timezone.utc).strftime("%Y%m%d%H")
+    await notifications.notify_signal(
+        session, merchant.id, merchant.plan,
+        sku_title=sku.title, signal_type=signal.type,
+        dedup_key=f"signal:{sku.id}:{signal.type}:{hour}",
+    )
+
+
 # ── F5 OOS email notification (best-effort) ──────────────────────────────────
 
 async def _notify_oos_alerts(session: AsyncSession, alerts: list[OOSAlert]) -> None:
@@ -321,7 +344,21 @@ async def _notify_oos_alerts(session: AsyncSession, alerts: list[OOSAlert]) -> N
             if sku is None:
                 continue
             merchant = await session.get(Merchant, sku.merchant_id)
-            if merchant is None or not merchant.email_notifications_enabled:
+            if merchant is None:
+                continue
+
+            competitor_name = await _competitor_name(session, alert.competitor_tracking_id)
+
+            # In-app notification — independent of the email preference below, so an
+            # OOS still shows in the bell even when email alerts are turned off.
+            await notifications.notify_oos(
+                session, merchant.id, merchant.plan,
+                sku_title=sku.title, competitor_domain=competitor_name,
+                dedup_key=f"oos:{alert.id}",
+            )
+
+            # Email — gated by the merchant's email preference + a recorded recipient.
+            if not merchant.email_notifications_enabled:
                 continue
             recipient = merchant.notification_email
             if not recipient:
@@ -331,7 +368,6 @@ async def _notify_oos_alerts(session: AsyncSession, alerts: list[OOSAlert]) -> N
                 )
                 continue
 
-            competitor_name = await _competitor_name(session, alert.competitor_tracking_id)
             sent = await email.send_oos_alert_email(
                 to=recipient,
                 competitor_name=competitor_name,

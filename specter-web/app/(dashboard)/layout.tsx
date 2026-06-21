@@ -17,6 +17,7 @@ import {
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useSignalSummary, useMerchant } from '@/lib/api'
+import NotificationBell from '@/components/dashboard/notification-bell'
 import { useResumeIntent } from '@/hooks/use-resume-intent'
 import { identifyMerchant } from '@/lib/analytics'
 import { cn } from '@/lib/utils'
@@ -75,10 +76,11 @@ export default function DashboardLayout({
     <div className="min-h-screen bg-bg flex">
       {/* Sidebar */}
       <aside className="w-60 shrink-0 border-r border-border bg-surface flex flex-col">
-        <div className="px-6 py-5 border-b border-border">
+        <div className="px-6 py-5 border-b border-border flex items-center justify-between gap-2">
           <Link href="/dashboard" className="font-display text-xl font-bold text-text tracking-tight">
             SPECTER<span className="text-primary">.</span>
           </Link>
+          <NotificationBell />
         </div>
 
         <nav className="flex-1 px-3 py-4 flex flex-col gap-1">

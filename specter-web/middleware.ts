@@ -48,6 +48,7 @@ export async function middleware(request: NextRequest) {
   const PROTECTED = [
     '/dashboard', '/workspace', '/signals', '/competitors', '/products',
     '/alerts', '/repricing', '/attribution', '/settings', '/billing',
+    '/notifications',
   ]
   const isProtected = PROTECTED.some(
     (p) => pathname === p || pathname.startsWith(`${p}/`),
@@ -92,6 +93,7 @@ export const config = {
     '/attribution/:path*',
     '/settings/:path*',
     '/billing/:path*',
+    '/notifications/:path*',
     '/sign-in/:path*',
     '/sign-up/:path*',
   ],

@@ -257,6 +257,9 @@ export const queryKeys = {
   attribution: (days: number) => ['attribution', days] as const,
   products: ['products'] as const,
   addons: ['billing', 'addons'] as const,
+  notifications: (opts?: { limit?: number; offset?: number; type?: string }) =>
+    ['notifications', opts ?? {}] as const,
+  notificationUnread: ['notifications', 'unread'] as const,
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -871,5 +874,89 @@ export function useProducts(): UseQueryResult<ProductsResponse, ApiError> {
   return useQuery({
     queryKey: queryKeys.products,
     queryFn: previewFn(previewProductsResponse, () => apiFetch<ProductsResponse>('/products')),
+  })
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// NOTIFICATION HOOKS
+// ════════════════════════════════════════════════════════════════════════════
+
+export type NotificationType = 'signal' | 'oos' | 'billing' | 'competitor_change' | 'system'
+export type NotificationSeverity = 'info' | 'success' | 'warning' | 'critical'
+
+export interface NotificationItem {
+  id: string
+  type: NotificationType
+  severity: NotificationSeverity
+  title: string
+  body: string
+  link: string | null
+  read: boolean
+  created_at: string
+}
+
+export interface NotificationListResp {
+  items: NotificationItem[]
+  total: number
+  unread: number
+}
+
+export function useNotifications(opts?: {
+  limit?: number
+  offset?: number
+  type?: NotificationType
+}): UseQueryResult<NotificationListResp, ApiError> {
+  const params = new URLSearchParams()
+  if (opts?.limit !== undefined) params.set('limit', String(opts.limit))
+  if (opts?.offset !== undefined) params.set('offset', String(opts.offset))
+  if (opts?.type) params.set('type', opts.type)
+  const qs = params.toString()
+  return useQuery({
+    queryKey: queryKeys.notifications(opts),
+    queryFn: previewFn(
+      { items: [], total: 0, unread: 0 },
+      () => apiFetch<NotificationListResp>(`/notifications${qs ? `?${qs}` : ''}`),
+    ),
+  })
+}
+
+export function useUnreadCount(): UseQueryResult<{ unread: number }, ApiError> {
+  return useQuery({
+    queryKey: queryKeys.notificationUnread,
+    queryFn: previewFn({ unread: 0 }, () => apiFetch<{ unread: number }>('/notifications/unread-count')),
+  })
+}
+
+function useNotificationInvalidate() {
+  const qc = useQueryClient()
+  return () => {
+    qc.invalidateQueries({ queryKey: ['notifications'] })
+  }
+}
+
+export function useMarkNotificationRead(): UseMutationResult<void, ApiError, string> {
+  const invalidate = useNotificationInvalidate()
+  return useMutation({
+    mutationFn: (id) =>
+      PREVIEW ? Promise.resolve() : apiFetch<void>(`/notifications/${id}/read`, { method: 'POST' }),
+    onSuccess: invalidate,
+  })
+}
+
+export function useMarkAllNotificationsRead(): UseMutationResult<void, ApiError, void> {
+  const invalidate = useNotificationInvalidate()
+  return useMutation({
+    mutationFn: () =>
+      PREVIEW ? Promise.resolve() : apiFetch<void>('/notifications/read-all', { method: 'POST' }),
+    onSuccess: invalidate,
+  })
+}
+
+export function useDismissNotification(): UseMutationResult<void, ApiError, string> {
+  const invalidate = useNotificationInvalidate()
+  return useMutation({
+    mutationFn: (id) =>
+      PREVIEW ? Promise.resolve() : apiFetch<void>(`/notifications/${id}`, { method: 'DELETE' }),
+    onSuccess: invalidate,
   })
 }

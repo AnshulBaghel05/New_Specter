@@ -34,7 +34,7 @@ from models.merchants import Merchant
 from models.processed_webhook_events import ProcessedWebhookEvent
 from models.skus import SKU
 from rate_limit import limiter
-from services import billing
+from services import billing, notifications
 from services.retention import schedule_downgrade_deletion
 
 router = APIRouter(prefix="/billing", tags=["billing"])
@@ -388,6 +388,13 @@ async def _apply_cancellation(session: AsyncSession, entity: dict) -> None:
     # transactions: a crash in between would leave the merchant on free with a
     # stale razorpay_subscription_id that webhook redelivery could never clear
     # (the plan == "free" guard above would short-circuit it forever).
+    # No dedup_key: the webhook is already idempotent per Razorpay event id
+    # (ProcessedWebhookEvent), so a redelivery never re-reaches this code.
+    await notifications.notify_billing(
+        session, merchant.id, severity="warning",
+        title="Subscription ended",
+        body=f"Your {merchant.plan.upper()} plan was cancelled — you've been moved to Free.",
+    )
     merchant.razorpay_subscription_id = None
     merchant.subscription_current_end = None
     merchant.subscription_cancel_at = None
@@ -413,6 +420,11 @@ async def _apply_activation(session: AsyncSession, entity: dict) -> None:
     merchant.max_competitors_per_sku = plan_competitor_limit(target_plan)
     merchant.subscription_current_end = _unix_to_dt(entity.get("current_end"))
     merchant.subscription_cancel_at = None  # a fresh charge clears any pending cancel
+    await notifications.notify_billing(
+        session, merchant.id, severity="success",
+        title=f"You're on {target_plan.upper()}",
+        body="Payment received — your subscription is active.",
+    )
     await session.commit()
 
 
@@ -476,9 +488,16 @@ async def webhook(request: Request, session: AsyncSession = Depends(get_db)) -> 
         await _apply_cancellation(session, entity)
     elif etype == "subscription.pending":
         # Payment failed; Razorpay is retrying (dunning in progress). Keep access
-        # during the retry window — it is only revoked on halt/cancel. No-op so an
-        # active paying customer mid-retry is never wrongly downgraded.
-        pass
+        # during the retry window — it is only revoked on halt/cancel — but warn the
+        # merchant so they can fix their card before access lapses.
+        entity = (event.get("payload", {}).get("subscription", {}) or {}).get("entity", {}) or {}
+        merchant = await _resolve_merchant(session, entity)
+        if merchant is not None:
+            await notifications.notify_billing(
+                session, merchant.id, severity="critical",
+                title="Payment failed",
+                body="We couldn't process your payment. Please update your card to keep your plan.",
+            )
 
     if event_id:
         await _record_webhook_event(session, event_id, etype)
