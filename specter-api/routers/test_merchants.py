@@ -361,19 +361,28 @@ class TestShopifyOAuth:
         ).hexdigest()
 
     def test_oauth_begin_redirects_to_shopify(self, client: TestClient):
-        """GET /merchants/shopify/oauth → redirect to Shopify authorize URL."""
-        merchant = make_merchant()
-        app.dependency_overrides[get_current_merchant] = override_merchant(merchant)
+        """GET /merchants/shopify/oauth?token=… → redirect to Shopify authorize URL.
 
-        resp = client.get(
-            "/merchants/shopify/oauth?shop=teststore.myshopify.com",
-            follow_redirects=False,
-        )
+        Begin now authenticates via the ?token= query param (the browser redirect
+        can't send a bearer header), so we patch the token→merchant resolver."""
+        merchant = make_merchant()
+        with patch("routers.merchants.merchant_from_token", new=AsyncMock(return_value=merchant)):
+            resp = client.get(
+                "/merchants/shopify/oauth?shop=teststore.myshopify.com&token=jwt",
+                follow_redirects=False,
+            )
         assert resp.status_code == 302
         location = resp.headers["location"]
         assert "teststore.myshopify.com" in location
         assert "client_id=test_api_key" in location
         assert "redirect_uri=" in location
+        assert "read_orders" in location          # attribution scope now requested
+
+    def test_oauth_begin_requires_token(self, client: TestClient):
+        """Without ?token= the begin step is a 422 (missing required query param)."""
+        resp = client.get("/merchants/shopify/oauth?shop=teststore.myshopify.com",
+                           follow_redirects=False)
+        assert resp.status_code == 422
 
     def test_oauth_callback_stores_encrypted_token(self, client: TestClient):
         """
@@ -387,14 +396,16 @@ class TestShopifyOAuth:
         session.commit = AsyncMock()
         session.refresh = AsyncMock()
 
-        app.dependency_overrides[get_current_merchant] = override_merchant(merchant)
         app.dependency_overrides[get_db] = override_db(session)
 
-        # Obtain a valid, merchant-bound CSRF state from the begin step.
+        # Obtain a valid, merchant-bound CSRF state from the begin step (now
+        # token-authenticated; the callback identifies the merchant from this state).
         from urllib.parse import parse_qs, urlparse
-        begin = client.get(
-            "/merchants/shopify/oauth?shop=teststore.myshopify.com", follow_redirects=False
-        )
+        with patch("routers.merchants.merchant_from_token", new=AsyncMock(return_value=merchant)):
+            begin = client.get(
+                "/merchants/shopify/oauth?shop=teststore.myshopify.com&token=jwt",
+                follow_redirects=False,
+            )
         state = parse_qs(urlparse(begin.headers["location"]).query)["state"][0]
 
         params = {"code": "abc123", "shop": "teststore.myshopify.com", "state": state}
@@ -423,16 +434,15 @@ class TestShopifyOAuth:
     def test_oauth_begin_rejects_non_myshopify_shop(self, client: TestClient):
         """`shop` that is not a *.myshopify.com domain → 400 (no redirect)."""
         merchant = make_merchant()
-        app.dependency_overrides[get_current_merchant] = override_merchant(merchant)
-
-        for bad in ("evil.com", "teststore.myshopify.com.evil.com",
-                    "teststore.myshopify.com/path", "internal-host"):
-            resp = client.get(
-                f"/merchants/shopify/oauth?shop={bad}",
-                follow_redirects=False,
-            )
-            assert resp.status_code == 400, bad
-            assert resp.json()["detail"]["error"] == "invalid_shop"
+        with patch("routers.merchants.merchant_from_token", new=AsyncMock(return_value=merchant)):
+            for bad in ("evil.com", "teststore.myshopify.com.evil.com",
+                        "teststore.myshopify.com/path", "internal-host"):
+                resp = client.get(
+                    f"/merchants/shopify/oauth?shop={bad}&token=jwt",
+                    follow_redirects=False,
+                )
+                assert resp.status_code == 400, bad
+                assert resp.json()["detail"]["error"] == "invalid_shop"
 
     def test_oauth_callback_rejects_non_myshopify_shop(self, client: TestClient):
         """A non-myshopify `shop` is rejected BEFORE token exchange (no client_secret

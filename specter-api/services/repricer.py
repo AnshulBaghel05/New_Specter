@@ -154,13 +154,16 @@ async def apply_price_change(
     sku: SKU,
     decision: RepriceDecision,
     signal_id: Optional[str] = None,
+    source: str = "auto",
 ) -> RepriceOutcome:
     """
     Apply a RepriceDecision to Shopify and record it.
 
     - 3x retry with exponential backoff on transient Shopify errors.
     - On 401: set merchant.shopify_reconnect_required, return needs_reconnect.
-    - On success: write a price_changes row (source='auto'), update sku.current_price.
+    - On success: write a price_changes row (source — 'auto' for the auto-reprice
+      cycle, 'manual' for a user's confirmed one-click apply), update
+      sku.current_price.
     - Does NOT commit — the caller owns the transaction.
     """
     if not merchant.shopify_domain or not merchant.shopify_access_token:
@@ -183,7 +186,7 @@ async def apply_price_change(
                 signal_id=signal_id,
                 old_price=old_price,
                 new_price=decision.new_price,
-                source="auto",
+                source=source,
                 revenue_delta=None,  # filled later by attribution service
             )
             session.add(pc)

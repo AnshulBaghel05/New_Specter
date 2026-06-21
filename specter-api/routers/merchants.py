@@ -37,18 +37,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timezone
 
 from auth.plan_gate import competitor_limit_for, plan_competitor_limit
-from auth.supabase import get_current_merchant
+from auth.supabase import get_current_merchant, merchant_from_token
 from db import get_db
 from models.merchants import Merchant
 from models.skus import SKU
+from services import crypto
 from services.trials import trial_end_at
+from sqlalchemy import func, select
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
 _SHOPIFY_API_KEY    = os.environ.get("SHOPIFY_API_KEY", "")
 _SHOPIFY_API_SECRET = os.environ.get("SHOPIFY_API_SECRET", "")
 _REDIRECT_URI       = os.environ.get("SHOPIFY_REDIRECT_URI", "")
-_SCOPES             = os.environ.get("SHOPIFY_SCOPES", "read_products,write_products")
+_SCOPES             = os.environ.get("SHOPIFY_SCOPES", "read_products,write_products,read_orders")
 _DASHBOARD_URL      = os.environ.get("DASHBOARD_URL", "/dashboard")
 _ENCRYPTION_KEY     = os.environ.get("ENCRYPTION_KEY", "")
 
@@ -95,6 +97,30 @@ def _verify_oauth_state(state: Optional[str], merchant_id: uuid.UUID) -> bool:
         _OAUTH_STATE_SECRET, f"{mid}.{nonce}".encode(), hashlib.sha256
     ).hexdigest()
     return hmac.compare_digest(sig, expected) and hmac.compare_digest(mid, str(merchant_id))
+
+
+def _merchant_id_from_state(state: Optional[str]) -> Optional[uuid.UUID]:
+    """Recover the merchant id from a signed OAuth state, verifying our HMAC first.
+
+    The callback is reached by Shopify's redirect with NO auth header, so the
+    merchant is identified from `state` — which we signed in the begin step and
+    which therefore can't be forged. Returns None if the signature is invalid or
+    the id isn't a UUID."""
+    if not state:
+        return None
+    try:
+        mid, nonce, sig = state.split(".")
+    except ValueError:
+        return None
+    expected = hmac.new(
+        _OAUTH_STATE_SECRET, f"{mid}.{nonce}".encode(), hashlib.sha256
+    ).hexdigest()
+    if not hmac.compare_digest(sig, expected):
+        return None
+    try:
+        return uuid.UUID(mid)
+    except (ValueError, TypeError):
+        return None
 
 
 def _fernet() -> Fernet:
@@ -162,6 +188,40 @@ def _verify_shopify_hmac(params: dict[str, str], received_hmac: str) -> bool:
         hashlib.sha256,
     ).hexdigest()
     return hmac.compare_digest(expected, received_hmac)
+
+
+SHOPIFY_API_VERSION = "2024-01"
+_SHOPIFY_MAX_RETRIES = 3
+
+
+class ShopifyAuthExpired(Exception):
+    """Shopify returned 401 — token expired/revoked; caller flags reconnect."""
+
+
+async def _shopify_get(
+    client: httpx.AsyncClient, shop: str, path: str, params: dict, access_token: str
+) -> httpx.Response:
+    """GET a Shopify Admin API path with 401 detection + 429 Retry-After backoff.
+
+    Raises ShopifyAuthExpired on 401 so the caller can mark reconnect-required.
+    Honors Shopify's strict rate limits (429 → wait Retry-After, bounded retries)."""
+    import asyncio
+
+    url = f"https://{shop}/admin/api/{SHOPIFY_API_VERSION}/{path}"
+    for attempt in range(_SHOPIFY_MAX_RETRIES):
+        resp = await client.get(url, params=params,
+                                headers={"X-Shopify-Access-Token": access_token})
+        if resp.status_code == 401:
+            raise ShopifyAuthExpired()
+        if resp.status_code == 429 and attempt < _SHOPIFY_MAX_RETRIES - 1:
+            try:
+                delay = float(resp.headers.get("Retry-After", "1"))
+            except ValueError:
+                delay = 2.0 * (2 ** attempt)
+            await asyncio.sleep(delay)
+            continue
+        return resp
+    return resp
 
 
 # ── Background: SKU import from Shopify ──────────────────────────────────────
@@ -329,12 +389,22 @@ async def start_trial(
 @router.get("/shopify/oauth")
 async def shopify_oauth_begin(
     shop: str = Query(..., description="Shopify store domain, e.g. mystore.myshopify.com"),
-    merchant: Merchant = Depends(get_current_merchant),
+    token: str = Query(..., description="Supabase access token (the browser redirect can't send a bearer header)"),
+    session: AsyncSession = Depends(get_db),
 ) -> RedirectResponse:
-    """Redirect merchant browser to Shopify OAuth consent screen."""
+    """Redirect the merchant's browser to Shopify's OAuth consent screen.
+
+    This is a top-level browser navigation, so it can't carry an Authorization
+    header — the Supabase JWT comes in as `?token=` (over HTTPS) and is validated
+    here. The authenticated merchant id is then embedded in the signed `state`, so
+    the callback (which Shopify reaches with no auth at all) identifies the merchant
+    from `state` rather than a bearer."""
     if not _SHOPIFY_API_KEY or not _REDIRECT_URI:
         raise HTTPException(500, detail={"error": "config_error",
                                          "message": "Shopify OAuth is not configured"})
+
+    # Authenticate from the query-param token (raises 401/402 on failure).
+    merchant = await merchant_from_token(token, session)
 
     if not _is_valid_shop_domain(shop):
         raise HTTPException(400, detail={"error": "invalid_shop",
@@ -356,13 +426,16 @@ async def shopify_oauth_callback(
     shop: str = Query(...),
     hmac_value: str = Query(..., alias="hmac"),
     state: Optional[str] = Query(None),
-    merchant: Merchant = Depends(get_current_merchant),
     session: AsyncSession = Depends(get_db),
     background_tasks: BackgroundTasks = BackgroundTasks(),
 ) -> RedirectResponse:
     """
     Exchange OAuth code for access token, store encrypted, trigger SKU import.
     Returns a redirect to the dashboard (F1 AC#3).
+
+    Shopify reaches this URL via a browser redirect with NO Authorization header,
+    so the merchant is identified from the signed `state` (issued + signed by us in
+    the begin step), not a bearer. HMAC + shop-domain validation are unchanged.
     """
     # Reject any non-myshopify.com `shop` BEFORE it reaches the token-exchange
     # POST (which carries the app client_secret) or the Admin API import — see
@@ -379,11 +452,17 @@ async def shopify_oauth_callback(
         raise HTTPException(400, detail={"error": "invalid_hmac",
                                          "message": "Shopify HMAC validation failed"})
 
-    # Verify the CSRF state we issued in /shopify/oauth — it must be signed by us
-    # and bound to THIS merchant. Blocks login-CSRF / store-binding attacks.
-    if not _verify_oauth_state(state, merchant.id):
+    # Identify the merchant from the signed state (our HMAC verifies it's untampered
+    # and bound to the merchant who began the flow — blocks login-CSRF / store-
+    # binding). No bearer is available on Shopify's redirect.
+    merchant_id = _merchant_id_from_state(state)
+    if merchant_id is None:
         raise HTTPException(400, detail={"error": "invalid_state",
                                          "message": "OAuth state validation failed"})
+    merchant = await session.get(Merchant, merchant_id)
+    if merchant is None:
+        raise HTTPException(400, detail={"error": "invalid_state",
+                                         "message": "OAuth state does not match a known merchant"})
 
     # Exchange code for access token
     async with httpx.AsyncClient(timeout=15.0) as client:
@@ -416,6 +495,197 @@ async def shopify_oauth_callback(
     )
 
     return RedirectResponse(_DASHBOARD_URL, status_code=status.HTTP_302_FOUND)
+
+
+# ── Product import: browse the live catalog + import selected variants ───────
+
+# Absolute ceiling on product rows a merchant may hold (abuse guard; the plan SKU
+# limit on (product × competitor) trackings is enforced separately at competitor-
+# add time). Mirrors routers/skus.MAX_SKUS_PER_MERCHANT.
+MAX_SKUS_PER_MERCHANT = 10_000
+
+
+class ShopifyVariantOut(BaseModel):
+    variant_id: str
+    title: str
+    price: Optional[str]
+    imported: bool
+
+
+class ShopifyProductOut(BaseModel):
+    product_id: str
+    title: str
+    handle: Optional[str]
+    variants: list[ShopifyVariantOut]
+
+
+class ShopifyProductsPage(BaseModel):
+    products: list[ShopifyProductOut]
+    next_page_info: Optional[str]   # opaque Shopify cursor for the next page
+
+
+class ImportRequest(BaseModel):
+    variant_ids: Optional[list[str]] = None   # specific variants to import
+    import_all: bool = False                  # or import the whole catalog
+
+
+class ImportResult(BaseModel):
+    imported: int
+    skipped: int
+    used: int
+    limit: int
+
+
+class _ImportLimitReached(Exception):
+    """Internal sentinel: per-merchant product ceiling hit mid-import."""
+
+
+@router.get("/shopify/products", response_model=ShopifyProductsPage)
+async def shopify_browse_products(
+    search: Optional[str] = Query(None, description="Title substring filter"),
+    page_info: Optional[str] = Query(None, description="Opaque Shopify pagination cursor"),
+    merchant: Merchant = Depends(get_current_merchant),
+    session: AsyncSession = Depends(get_db),
+) -> ShopifyProductsPage:
+    """List the connected store's Shopify catalog (live), flagging which variants
+    are already imported. Paginated via Shopify's cursor so big catalogs load in
+    chunks. Read-only — importing is a separate explicit POST."""
+    if not merchant.shopify_domain or not merchant.shopify_access_token:
+        raise HTTPException(409, detail={"error": "no_shopify_connection",
+                                         "message": "Connect your Shopify store first"})
+    token = crypto.decrypt(merchant.shopify_access_token)
+
+    params: dict = {"limit": 50, "fields": "id,title,handle,variants"}
+    if page_info:
+        params["page_info"] = page_info   # cursor; cannot combine with title filter
+    elif search:
+        params["title"] = search
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await _shopify_get(client, merchant.shopify_domain, "products.json", params, token)
+    except ShopifyAuthExpired:
+        merchant.shopify_reconnect_required = True
+        await session.commit()
+        raise HTTPException(409, detail={"error": "shopify_reconnect_required",
+                                         "message": "Your Shopify token expired — reconnect to browse products"})
+    if not resp.ok:
+        raise HTTPException(502, detail={"error": "shopify_fetch_failed",
+                                         "message": "Couldn't load products from Shopify"})
+
+    products = resp.json().get("products", [])
+    all_vids = [str(v["id"]) for p in products for v in p.get("variants", [])]
+    imported_vids: set[str] = set()
+    if all_vids:
+        rows = (await session.execute(
+            select(SKU.shopify_variant_id).where(
+                SKU.merchant_id == merchant.id, SKU.shopify_variant_id.in_(all_vids))
+        )).scalars().all()
+        imported_vids = {r for r in rows if r}
+
+    out = [
+        ShopifyProductOut(
+            product_id=str(p["id"]), title=p.get("title", ""), handle=p.get("handle"),
+            variants=[
+                ShopifyVariantOut(
+                    variant_id=str(v["id"]),
+                    title=v.get("title", "") or "Default",
+                    price=v.get("price"),
+                    imported=str(v["id"]) in imported_vids,
+                ) for v in p.get("variants", [])
+            ],
+        ) for p in products
+    ]
+
+    next_cursor = None
+    link = resp.headers.get("Link", "")
+    if 'rel="next"' in link:
+        m = re.search(r'page_info=([^&>]+).*?rel="next"', link)
+        next_cursor = m.group(1) if m else None
+
+    return ShopifyProductsPage(products=out, next_page_info=next_cursor)
+
+
+@router.post("/shopify/import", response_model=ImportResult)
+async def shopify_import_products(
+    body: ImportRequest,
+    merchant: Merchant = Depends(get_current_merchant),
+    session: AsyncSession = Depends(get_db),
+) -> ImportResult:
+    """Import selected Shopify variants (or the whole catalog) into `skus`.
+
+    Server-side enforcement: never exceed the per-merchant product ceiling. Already-
+    imported variants are skipped (idempotent re-import). Stores into the existing
+    skus schema (title, handle, current_price, shopify_variant_id)."""
+    if not merchant.shopify_domain or not merchant.shopify_access_token:
+        raise HTTPException(409, detail={"error": "no_shopify_connection",
+                                         "message": "Connect your Shopify store first"})
+    if not body.import_all and not body.variant_ids:
+        raise HTTPException(422, detail={"error": "nothing_selected",
+                                         "message": "Select at least one product, or choose import all"})
+
+    token = crypto.decrypt(merchant.shopify_access_token)
+    used = (await session.execute(
+        select(func.count()).select_from(SKU).where(SKU.merchant_id == merchant.id)
+    )).scalar_one()
+
+    want = None if body.import_all else {str(v) for v in (body.variant_ids or [])}
+    existing = {r for r in (await session.execute(
+        select(SKU.shopify_variant_id).where(SKU.merchant_id == merchant.id)
+    )).scalars().all() if r}
+
+    imported = skipped = 0
+    page_info: Optional[str] = None
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            while True:
+                params: dict = {"limit": 250, "fields": "id,title,handle,variants"}
+                if page_info:
+                    params["page_info"] = page_info
+                resp = await _shopify_get(client, merchant.shopify_domain, "products.json", params, token)
+                if not resp.ok:
+                    break
+                for product in resp.json().get("products", []):
+                    for variant in product.get("variants", []):
+                        vid = str(variant["id"])
+                        if want is not None and vid not in want:
+                            continue
+                        if vid in existing:
+                            skipped += 1
+                            continue
+                        if used + imported >= MAX_SKUS_PER_MERCHANT:
+                            raise _ImportLimitReached()
+                        session.add(SKU(
+                            merchant_id=merchant.id,
+                            title=f"{product['title']} — {variant.get('title', '')}".strip(" — "),
+                            handle=product.get("handle"),
+                            current_price=variant.get("price"),
+                            shopify_variant_id=vid,
+                        ))
+                        imported += 1
+                # Stop early once every specifically-requested variant is handled.
+                if want is not None and imported + skipped >= len(want):
+                    break
+                link = resp.headers.get("Link", "")
+                m = re.search(r'page_info=([^&>]+).*?rel="next"', link) if 'rel="next"' in link else None
+                page_info = m.group(1) if m else None
+                if not page_info:
+                    break
+    except ShopifyAuthExpired:
+        merchant.shopify_reconnect_required = True
+        await session.commit()
+        raise HTTPException(409, detail={"error": "shopify_reconnect_required",
+                                         "message": "Your Shopify token expired — reconnect to import"})
+    except _ImportLimitReached:
+        await session.commit()  # keep what we imported up to the cap
+        raise HTTPException(409, detail={
+            "error": "sku_limit_reached",
+            "message": f"You can hold up to {MAX_SKUS_PER_MERCHANT} products. Imported {imported} before reaching the cap.",
+        })
+
+    await session.commit()
+    return ImportResult(imported=imported, skipped=skipped, used=used + imported,
+                        limit=MAX_SKUS_PER_MERCHANT)
 
 
 @router.post("/shopify/disconnect", status_code=status.HTTP_204_NO_CONTENT,

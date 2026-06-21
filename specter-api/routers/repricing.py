@@ -27,6 +27,7 @@ from models.merchants import Merchant
 from models.price_changes import PriceChange
 from models.signals import Signal
 from models.skus import SKU
+from services.repricer import RepriceDecision, RepriceOutcome, apply_price_change
 
 # CIPHER+ gate reused as the auth dependency for every route here.
 _cipher = plan_gate("auto_reprice")
@@ -76,6 +77,17 @@ class PriceChangeOut(BaseModel):
     source: str
     revenue_delta: Optional[float]
     created_at: str
+
+
+class ApplyPriceIn(BaseModel):
+    new_price: Decimal
+
+
+class ApplyPriceOut(BaseModel):
+    applied: bool
+    new_price: float
+    old_price: float
+    reason: str
 
 
 # ── Router ────────────────────────────────────────────────────────────────────
@@ -191,6 +203,61 @@ async def update_sku_reprice(
         auto_reprice_enabled=sku.auto_reprice_enabled,
         latest_suggestion=None,
     )
+
+
+@router.post("/sku/{sku_id}/apply", response_model=ApplyPriceOut)
+async def apply_manual_price(
+    sku_id: uuid.UUID,
+    body: ApplyPriceIn,
+    merchant: Merchant = Depends(_cipher),
+    session: AsyncSession = Depends(get_db),
+) -> ApplyPriceOut:
+    """Apply a user-confirmed price to the live Shopify store (one-click, after the
+    suggestion was shown). This is the manual counterpart to the auto-reprice cycle:
+    the merchant explicitly confirms the price, so there is no signal gate — but the
+    SAME guardrails apply. The submitted price is re-validated server-side against
+    the SKU's floor/ceiling (the client value is never trusted blindly), then written
+    via the shared apply_price_change (Shopify PUT + 3× retry + 401 handling), recorded
+    as source='manual'. Errors surface clearly: 409 reconnect, 502 write failure."""
+    sku = await session.get(SKU, sku_id)
+    if sku is None or sku.merchant_id != merchant.id:
+        raise HTTPException(404, detail={"error": "sku_not_found"})
+
+    new_price = Decimal(body.new_price)
+    if new_price <= 0:
+        raise HTTPException(422, detail={"error": "price_out_of_bounds",
+                                         "message": "Price must be greater than zero"})
+    # Re-enforce guardrails server-side — a manual apply must never breach the
+    # floor/ceiling the merchant set, exactly like the auto path.
+    if sku.floor_price is not None and new_price < sku.floor_price:
+        raise HTTPException(422, detail={"error": "price_out_of_bounds",
+                                         "message": f"Price is below your floor of ${float(sku.floor_price):.2f}"})
+    if sku.ceiling_price is not None and new_price > sku.ceiling_price:
+        raise HTTPException(422, detail={"error": "price_out_of_bounds",
+                                         "message": f"Price is above your ceiling of ${float(sku.ceiling_price):.2f}"})
+
+    if not merchant.shopify_domain or not merchant.shopify_access_token:
+        raise HTTPException(409, detail={"error": "no_shopify_connection",
+                                         "message": "Connect your Shopify store to apply price changes"})
+
+    old_price = float(sku.current_price) if sku.current_price is not None else 0.0
+    decision = RepriceDecision(new_price=new_price, clamped=None,
+                               reason="Manual one-click apply")
+    outcome: RepriceOutcome = await apply_price_change(
+        session, merchant, sku, decision, signal_id=None, source="manual",
+    )
+
+    if not outcome.applied:
+        if outcome.needs_reconnect:
+            await session.commit()  # persist the reconnect-required flag
+            raise HTTPException(409, detail={"error": "shopify_reconnect_required",
+                                             "message": "Your Shopify token expired — reconnect to apply prices"})
+        raise HTTPException(502, detail={"error": "shopify_write_failed",
+                                         "message": "Shopify rejected the price update. Nothing was changed — try again."})
+
+    await session.commit()
+    return ApplyPriceOut(applied=True, new_price=float(new_price), old_price=old_price,
+                         reason=outcome.reason)
 
 
 @router.get("/changes", response_model=list[PriceChangeOut])

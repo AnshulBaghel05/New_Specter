@@ -297,8 +297,17 @@ export function useUpdateMerchant(): UseMutationResult<
  * Returns the Shopify OAuth begin URL. The caller redirects the browser to it
  * (window.location.href = url) so Shopify can show the consent screen.
  */
-export function shopifyOAuthUrl(shop: string): string {
-  return `${API_URL}/merchants/shopify/oauth?shop=${encodeURIComponent(shop)}`
+/**
+ * Build the Shopify OAuth begin URL for a top-level browser redirect. This is NOT
+ * an apiFetch call — it's `window.location.href`, which can't send an Authorization
+ * header — so the Supabase access token is passed as a `?token=` query param (over
+ * HTTPS) and validated server-side. Returns null when there's no active session
+ * (the caller should keep the user on the page rather than start a broken flow).
+ */
+export async function shopifyOAuthUrl(shop: string): Promise<string | null> {
+  const token = await getAccessToken()
+  if (!token) return null
+  return `${API_URL}/merchants/shopify/oauth?shop=${encodeURIComponent(shop)}&token=${encodeURIComponent(token)}`
 }
 
 export function useDisconnectShopify(): UseMutationResult<void, ApiError, void> {
@@ -949,6 +958,94 @@ export function useMarkAllNotificationsRead(): UseMutationResult<void, ApiError,
     mutationFn: () =>
       PREVIEW ? Promise.resolve() : apiFetch<void>('/notifications/read-all', { method: 'POST' }),
     onSuccess: invalidate,
+  })
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// SHOPIFY PRODUCT IMPORT HOOKS
+// ════════════════════════════════════════════════════════════════════════════
+
+export interface ShopifyVariant {
+  variant_id: string
+  title: string
+  price: string | null
+  imported: boolean
+}
+export interface ShopifyProduct {
+  product_id: string
+  title: string
+  handle: string | null
+  variants: ShopifyVariant[]
+}
+export interface ShopifyProductsPage {
+  products: ShopifyProduct[]
+  next_page_info: string | null
+}
+export interface ImportResult {
+  imported: number
+  skipped: number
+  used: number
+  limit: number
+}
+
+export function useShopifyProducts(opts?: {
+  search?: string
+  pageInfo?: string | null
+  enabled?: boolean
+}): UseQueryResult<ShopifyProductsPage, ApiError> {
+  const params = new URLSearchParams()
+  if (opts?.search) params.set('search', opts.search)
+  if (opts?.pageInfo) params.set('page_info', opts.pageInfo)
+  const qs = params.toString()
+  return useQuery({
+    queryKey: ['shopify', 'products', opts?.search ?? '', opts?.pageInfo ?? ''],
+    queryFn: () => apiFetch<ShopifyProductsPage>(`/merchants/shopify/products${qs ? `?${qs}` : ''}`),
+    enabled: opts?.enabled ?? true,
+  })
+}
+
+export function useImportShopifyProducts(): UseMutationResult<
+  ImportResult,
+  ApiError,
+  { variant_ids?: string[]; import_all?: boolean }
+> {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body) => apiFetch<ImportResult>('/merchants/shopify/import', {
+      method: 'POST', body: JSON.stringify(body),
+    }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.skus })
+      qc.invalidateQueries({ queryKey: queryKeys.skuCount })
+      qc.invalidateQueries({ queryKey: queryKeys.products })
+      qc.invalidateQueries({ queryKey: ['shopify', 'products'] })
+    },
+  })
+}
+
+// One-click apply of a confirmed price to the live Shopify store (CIPHER+).
+export interface ApplyPriceResult {
+  applied: boolean
+  new_price: number
+  old_price: number
+  reason: string
+}
+export function useApplyManualPrice(): UseMutationResult<
+  ApplyPriceResult,
+  ApiError,
+  { id: string; new_price: number }
+> {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, new_price }) =>
+      apiFetch<ApplyPriceResult>(`/repricing/sku/${id}/apply`, {
+        method: 'POST', body: JSON.stringify({ new_price: String(new_price) }),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.repricing })
+      qc.invalidateQueries({ queryKey: queryKeys.priceChanges })
+      qc.invalidateQueries({ queryKey: queryKeys.products })
+    },
   })
 }
 

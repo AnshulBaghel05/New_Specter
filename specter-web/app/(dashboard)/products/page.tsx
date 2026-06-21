@@ -1,7 +1,8 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { Boxes } from 'lucide-react'
+import Link from 'next/link'
+import { Boxes, Download } from 'lucide-react'
 import { useProducts } from '@/lib/api'
 import SkuMeter from '@/components/dashboard/sku-meter'
 import EmptyState from '@/components/dashboard/empty-state'
@@ -46,9 +47,17 @@ export default function ProductsPage() {
             Add a product, link the competitors you want to track, and watch its signal.
           </p>
         </div>
-        {data && (
-          <SkuMeter used={data.sku_used} limit={data.sku_limit} maxCompetitors={data.max_competitors_per_sku} />
-        )}
+        <div className="flex items-center gap-3 flex-wrap">
+          <Link
+            href="/products/import"
+            className="inline-flex items-center gap-2 border border-border text-muted hover:text-text hover:border-primary/40 px-4 py-2 rounded-xl font-body text-sm transition-colors"
+          >
+            <Download size={15} aria-hidden="true" /> Import from Shopify
+          </Link>
+          {data && (
+            <SkuMeter used={data.sku_used} limit={data.sku_limit} maxCompetitors={data.max_competitors_per_sku} />
+          )}
+        </div>
       </header>
 
       {isLoading ? (

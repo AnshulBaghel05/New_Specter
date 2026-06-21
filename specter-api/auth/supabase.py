@@ -108,18 +108,14 @@ async def _decode_token(token: str) -> dict:
     raise _401
 
 
-async def get_current_merchant(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
-    session: AsyncSession = Depends(get_db),
-) -> Merchant:
-    """
-    FastAPI dependency.  Validates the Supabase JWT and returns the Merchant row.
-    Raises HTTP 401 on any auth failure.
-    """
-    if credentials is None:
-        raise _401
+async def merchant_from_token(token: str, session: AsyncSession) -> Merchant:
+    """Resolve (or first-time create) the Merchant for a raw Supabase access token.
 
-    payload = await _decode_token(credentials.credentials)
+    Shared by the bearer dependency below and the Shopify OAuth begin endpoint,
+    which authenticates via a `?token=` query param because a top-level browser
+    redirect to Shopify can't carry an Authorization header. Raises HTTP 401 on any
+    auth failure; 402 when the account is read-only (trial expired)."""
+    payload = await _decode_token(token)
 
     supabase_user_id: Optional[str] = payload.get("sub")
     if not supabase_user_id:
@@ -177,3 +173,14 @@ async def get_current_merchant(
     # (no-op without Sentry — see observability.py).
     set_merchant_scope(str(merchant.id))
     return merchant
+
+
+async def get_current_merchant(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
+    session: AsyncSession = Depends(get_db),
+) -> Merchant:
+    """FastAPI dependency. Validates the Supabase JWT (Authorization: Bearer) and
+    returns the Merchant row. Raises HTTP 401 on any auth failure."""
+    if credentials is None:
+        raise _401
+    return await merchant_from_token(credentials.credentials, session)

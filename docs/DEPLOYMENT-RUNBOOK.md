@@ -303,6 +303,7 @@ Create a **Railway Cron** service (or a service with scheduled commands). Env:
 | `0 1 * * *` (daily)            | `…/internal/run-cost-flush …`                                                                                    | Roll Redis cost counters →`merchant_cost_daily` |
 | `0 * * * *` (**hourly**) | `…/internal/run-proxy-guard …`                                                                                   | Residential-spend guardrail (margin alert)         |
 | `15 0 * * *` (daily)           | `…/internal/run-fx-refresh …`                                                                                   | Cache live USD-base FX rates (signal normalization) |
+| `30 1 * * *` (daily)           | `…/internal/run-attribution …`                                                                                  | Fill revenue_delta from Shopify orders (24h window) |
 
 The FX refresh is **optional**: if it never runs, the signal engine falls back to
 the embedded static rate table in `services/fx.py` — competitor prices are still

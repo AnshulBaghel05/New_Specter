@@ -136,3 +136,22 @@ def test_fx_refresh_wrong_token_rejected_401(client):
         resp = client.post("/internal/run-fx-refresh", headers={"Authorization": "Bearer nope"})
     assert resp.status_code == 401
     fake.assert_not_called()
+
+
+def test_attribution_valid_token_runs_backfill(client):
+    app.dependency_overrides[get_db] = override_db(AsyncMock())
+    fake = AsyncMock(return_value={"candidates": 3, "attributed": 2, "skipped": 1})
+    with patch("routers.cron.run_attribution_backfill", new=fake):
+        resp = client.post("/internal/run-attribution", headers={"Authorization": f"Bearer {SECRET}"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ok" and body["attributed"] == 2 and body["skipped"] == 1
+    fake.assert_awaited_once()
+
+
+def test_attribution_wrong_token_rejected_401(client):
+    app.dependency_overrides[get_db] = override_db(AsyncMock())
+    with patch("routers.cron.run_attribution_backfill", new=AsyncMock()) as fake:
+        resp = client.post("/internal/run-attribution", headers={"Authorization": "Bearer nope"})
+    assert resp.status_code == 401
+    fake.assert_not_awaited()

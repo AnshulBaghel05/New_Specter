@@ -24,6 +24,7 @@ from auth.cron_auth import require_cron_auth
 from db import get_db
 from redis_client import get_redis
 from services import fx
+from services.attribution import run_attribution_backfill
 from services.cost_ledger import flush_daily
 from services.proxy_guard import run_proxy_guard
 from services.retention import purge_expired_snapshots
@@ -78,6 +79,16 @@ async def trigger_proxy_guard(redis: Redis = Depends(get_redis)) -> dict:
     dedup means an overlapping/repeated run won't spam ops. Run more often than the
     daily jobs (e.g. hourly) so a residential storm is caught the hour it starts."""
     result = await run_proxy_guard(redis, datetime.now(timezone.utc))
+    return {"status": "ok", **result}
+
+
+@router.post("/run-attribution")
+async def trigger_attribution(session: AsyncSession = Depends(get_db)) -> dict:
+    """Daily tick: fill revenue_delta for price changes whose 24h sales window has
+    elapsed, using real Shopify Orders data. Idempotent (only un-attributed rows)
+    and best-effort per change, so a single store's Shopify outage can't block the
+    rest. Without this, the attribution chart stays empty."""
+    result = await run_attribution_backfill(session)
     return {"status": "ok", **result}
 
 

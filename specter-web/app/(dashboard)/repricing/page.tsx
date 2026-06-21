@@ -7,6 +7,7 @@ import {
   usePriceChanges,
   useUpdateRepriceSettings,
   useUpdateRepriceSKU,
+  useApplyManualPrice,
   type RepriceSKU,
 } from '@/lib/api'
 import LockedValueCard from '@/components/dashboard/locked-value-card'
@@ -18,7 +19,7 @@ import EmptyState from '@/components/dashboard/empty-state'
 import { timeAgo } from '@/lib/time-ago'
 import { cn } from '@/lib/utils'
 import { formatMoney } from '@/lib/currency'
-import { toast } from '@/lib/toast'
+import { toast, formatApiError } from '@/lib/toast'
 import { useQueryParams } from '@/lib/dashboard/use-query-params'
 import { parseRepriceFilter, parseRepriceSort, parseSearchQuery } from '@/lib/dashboard/url-params'
 import { repricePrefill, formatLandingToast } from '@/lib/dashboard/reprice-prefill'
@@ -366,6 +367,16 @@ function SKURow({
         )}
       </div>
 
+      {/* One-click apply — the suggestion is shown above; this writes it to the
+          live Shopify store after an explicit confirm. Never auto-pushes. */}
+      {sku.latest_suggestion?.price_suggestion != null && (
+        <ApplySuggestion
+          skuId={sku.id}
+          suggested={sku.latest_suggestion.price_suggestion}
+          currency={sku.currency}
+        />
+      )}
+
       {/* Projected price preview */}
       <RepricePreviewChip preview={preview} currentPrice={sku.current_price} currency={sku.currency} />
 
@@ -459,6 +470,77 @@ function Bound({
           className="w-24 bg-bg border border-border rounded-lg pl-5 pr-2 py-1.5 font-mono text-sm text-text focus:outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/20 transition-all"
         />
       </div>
+    </div>
+  )
+}
+
+/**
+ * One-click "Apply price" with an inline confirm step. The suggested price is
+ * already shown on the row; clicking Apply reveals a confirm/cancel, and only the
+ * explicit confirm writes to the live Shopify store. Errors (reconnect / write
+ * failure) surface as toasts; the dashboard refreshes via cache invalidation.
+ */
+function ApplySuggestion({
+  skuId,
+  suggested,
+  currency,
+}: {
+  skuId: string
+  suggested: number
+  currency: string
+}) {
+  const [confirming, setConfirming] = useState(false)
+  const apply = useApplyManualPrice()
+
+  function doApply() {
+    apply.mutate(
+      { id: skuId, new_price: suggested },
+      {
+        onSuccess: (r) => {
+          setConfirming(false)
+          toast.success(`Price updated to ${formatMoney(r.new_price, currency)} on Shopify`)
+        },
+        onError: (e) => {
+          setConfirming(false)
+          toast.error(formatApiError(e))
+        },
+      },
+    )
+  }
+
+  if (!confirming) {
+    return (
+      <button
+        type="button"
+        onClick={() => setConfirming(true)}
+        className="self-start inline-flex items-center gap-1.5 border border-primary/40 text-primary hover:bg-primary/10 px-3 py-1.5 rounded-lg font-body text-xs font-semibold transition-colors"
+      >
+        Apply {formatMoney(suggested, currency)} to Shopify
+      </button>
+    )
+  }
+
+  return (
+    <div className="self-start flex items-center gap-2">
+      <span className="font-body text-xs text-muted">
+        Write {formatMoney(suggested, currency)} to your live store?
+      </span>
+      <button
+        type="button"
+        onClick={doApply}
+        disabled={apply.isPending}
+        className="gradient-primary-cta px-3 py-1.5 rounded-lg font-body text-xs font-semibold disabled:opacity-50"
+      >
+        {apply.isPending ? 'Applying…' : 'Confirm'}
+      </button>
+      <button
+        type="button"
+        onClick={() => setConfirming(false)}
+        disabled={apply.isPending}
+        className="font-body text-xs text-muted hover:text-text"
+      >
+        Cancel
+      </button>
     </div>
   )
 }

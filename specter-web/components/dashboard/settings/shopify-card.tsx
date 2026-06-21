@@ -10,10 +10,12 @@ export default function ShopifyCard({ merchant }: { merchant: Merchant }) {
   const disconnect = useDisconnectShopify()
   const [shop, setShop] = useState('')
 
-  function connect() {
+  async function connect() {
     const trimmed = shop.trim().replace(/^https?:\/\//, '')
     if (!trimmed) return
-    window.location.href = shopifyOAuthUrl(trimmed)
+    const url = await shopifyOAuthUrl(trimmed)
+    if (url) window.location.href = url
+    else toast.error('Your session expired — sign in again to connect Shopify.')
   }
 
   if (merchant.shopify_connected && !merchant.shopify_reconnect_required) {
@@ -58,8 +60,11 @@ export default function ShopifyCard({ merchant }: { merchant: Merchant }) {
           </div>
         </div>
         <button
-          onClick={() => {
-            if (merchant.shopify_domain) window.location.href = shopifyOAuthUrl(merchant.shopify_domain)
+          onClick={async () => {
+            if (!merchant.shopify_domain) return
+            const url = await shopifyOAuthUrl(merchant.shopify_domain)
+            if (url) window.location.href = url
+            else toast.error('Your session expired — sign in again to reconnect.')
           }}
           className="gradient-primary-cta btn-ripple self-start px-5 py-2.5 rounded-xl font-semibold text-sm transition-all duration-200"
         >
