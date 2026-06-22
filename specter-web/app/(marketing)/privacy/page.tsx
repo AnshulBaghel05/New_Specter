@@ -273,8 +273,8 @@ export default function PrivacyPage() {
                       <Td>Legitimate interests (Art. 6(1)(f)) — improving the product</Td>
                     </tr>
                     <tr>
-                      <Td>Marketing emails to existing customers</Td>
-                      <Td>Legitimate interests (Art. 6(1)(f)) — soft opt-in for related services</Td>
+                      <Td>Newsletter &amp; marketing emails</Td>
+                      <Td>Consent (Art. 6(1)(a)) — you opt in via the subscribe form and can withdraw any time by unsubscribing</Td>
                     </tr>
                     <tr>
                       <Td>Early access waitlist emails</Td>

@@ -35,6 +35,7 @@ type SubmitState = 'idle' | 'loading' | 'success' | 'error'
 
 export default function Footer() {
   const [email, setEmail] = useState('')
+  const [consent, setConsent] = useState(false)
   const [submitState, setSubmitState] = useState<SubmitState>('idle')
   const [error, setError] = useState('')
 
@@ -49,10 +50,27 @@ export default function Footer() {
       setError('Please enter a valid email address.')
       return
     }
+    if (!consent) {
+      setError('Please tick the box to agree to receive emails.')
+      return
+    }
     setSubmitState('loading')
-    // Simulate API call — replace with real endpoint
-    await new Promise((r) => setTimeout(r, 900))
-    setSubmitState('success')
+    try {
+      const res = await fetch('/api/newsletter/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, consent: true, source: 'footer' }),
+      })
+      if (res.ok) {
+        setSubmitState('success')
+      } else {
+        setSubmitState('error')
+        setError('Something went wrong. Please try again.')
+      }
+    } catch {
+      setSubmitState('error')
+      setError('Network error. Please try again.')
+    }
   }
 
   return (
@@ -145,6 +163,19 @@ export default function Footer() {
                     {error}
                   </p>
                 )}
+                <label className="flex items-start gap-2 mt-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={consent}
+                    onChange={(e) => { setConsent(e.target.checked); if (error) setError('') }}
+                    className="mt-0.5 h-3.5 w-3.5 shrink-0 rounded border-border bg-surface accent-primary"
+                    aria-label="Consent to receive marketing emails"
+                  />
+                  <span className="font-body text-[11px] text-muted leading-snug">
+                    I agree to receive occasional product &amp; pricing emails. Unsubscribe anytime. See our{' '}
+                    <Link href="/privacy" className="text-primary hover:underline">Privacy Policy</Link>.
+                  </span>
+                </label>
               </form>
             )}
           </div>
