@@ -85,8 +85,8 @@ export function initPostHog() {
     capture_pageview: false,   // we fire page views manually
     capture_pageleave: true,
     persistence: 'localStorage+cookie',
-    autocapture: false,        // explicit events only
-    disable_session_recording: process.env.NODE_ENV !== 'production',
+    autocapture: false,             // explicit events only
+    disable_session_recording: true, // no session replay — avoids capturing PII from inputs
   })
   _initialised = true
 }

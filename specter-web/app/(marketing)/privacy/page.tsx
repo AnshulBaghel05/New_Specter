@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import Nav from '@/components/marketing/nav'
 import Footer from '@/components/marketing/footer'
+import { SUBPROCESSORS } from '@/lib/legal/constants'
 
 export const metadata: Metadata = {
   title: 'Privacy Policy — SPECTER',
@@ -141,7 +142,7 @@ export default function PrivacyPage() {
 
               <Section id="summary" num="00" title="Plain English Summary">
                 <Callout>
-                  <p><strong className="text-text">What we collect:</strong> Your email, name, and store connection info when you sign up. Usage analytics to improve the product. Payment info processed by Stripe (we never see your card). Nothing from free tool inputs.</p>
+                  <p><strong className="text-text">What we collect:</strong> Your email, name, and store connection info when you sign up. Usage analytics to improve the product. Payment info processed by Razorpay (we never see your full card). Nothing from free tool inputs.</p>
                   <p><strong className="text-text">What we don&apos;t do:</strong> We do not sell your data. We do not share your price intelligence data with other users. We do not store what you type into our free calculators.</p>
                   <p><strong className="text-text">Web scraping:</strong> When you add competitor URLs, we scrape those public pages on your behalf. We never scrape pages that require login credentials.</p>
                   <p><strong className="text-text">Your rights:</strong> You can access, correct, export, or delete your data at any time by emailing privacy@specterapp.io.</p>
@@ -162,6 +163,12 @@ export default function PrivacyPage() {
                   from users of our platform. For data processed on behalf of our customers in
                   connection with their use of the platform, SPECTER acts as a{' '}
                   <strong className="text-text">data processor</strong>.
+                </p>
+                <p>
+                  As an India-based business, we also process personal data in accordance with India&apos;s
+                  Digital Personal Data Protection Act, 2023 (&quot;DPDP Act&quot;). Where we process
+                  personal data on behalf of business customers, that processing is governed by our{' '}
+                  <Link href="/dpa" className="text-primary hover:underline">Data Processing Addendum</Link>.
                 </p>
                 <p>
                   Contact: <a href="mailto:privacy@specterapp.io" className="text-primary hover:underline">privacy@specterapp.io</a>
@@ -203,9 +210,10 @@ export default function PrivacyPage() {
 
                 <p><strong className="text-text">Payment data</strong></p>
                 <p>
-                  All payment processing is handled by Stripe. We receive and store only your billing
-                  email, plan tier, and subscription status. SPECTER never sees or stores your full
-                  card number, CVC, or bank details.
+                  Payment processing is handled by Razorpay (and any additional payment processor we may
+                  use in future). We receive and store only your billing email, plan tier, and
+                  subscription status. SPECTER never sees or stores your full card number, CVC, or bank
+                  details.
                 </p>
 
                 <p><strong className="text-text">Communications</strong></p>
@@ -324,56 +332,21 @@ export default function PrivacyPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    <tr>
-                      <Td><strong className="text-text">Supabase</strong></Td>
-                      <Td>User authentication and session management</Td>
-                      <Td>Email, name, password hash</Td>
-                      <Td>US (with SCCs for EEA users)</Td>
-                    </tr>
-                    <tr>
-                      <Td><strong className="text-text">Supabase</strong></Td>
-                      <Td>Primary database</Td>
-                      <Td>Account data, store data, scrape targets, price history</Td>
-                      <Td>US / EU (configurable)</Td>
-                    </tr>
-                    <tr>
-                      <Td><strong className="text-text">Vercel</strong></Td>
-                      <Td>Web application hosting (specterapp.io)</Td>
-                      <Td>IP addresses, request logs</Td>
-                      <Td>US / Global CDN</Td>
-                    </tr>
-                    <tr>
-                      <Td><strong className="text-text">Railway</strong></Td>
-                      <Td>API and scraper service hosting</Td>
-                      <Td>Competitor URLs, scrape job data</Td>
-                      <Td>US</Td>
-                    </tr>
-                    <tr>
-                      <Td><strong className="text-text">Upstash</strong></Td>
-                      <Td>Redis caching and rate limiting</Td>
-                      <Td>Temporary job state</Td>
-                      <Td>US / EU</Td>
-                    </tr>
-                    <tr>
-                      <Td><strong className="text-text">PostHog</strong></Td>
-                      <Td>Product analytics</Td>
-                      <Td>Pseudonymised usage events, IP</Td>
-                      <Td>EU (EU Cloud)</Td>
-                    </tr>
-                    <tr>
-                      <Td><strong className="text-text">Stripe</strong></Td>
-                      <Td>Payment processing and subscription management</Td>
-                      <Td>Billing email, plan info</Td>
-                      <Td>US (EU data residency available)</Td>
-                    </tr>
-                    <tr>
-                      <Td><strong className="text-text">Resend</strong></Td>
-                      <Td>Transactional email delivery</Td>
-                      <Td>Email address, email content</Td>
-                      <Td>US</Td>
-                    </tr>
+                    {SUBPROCESSORS.map((s) => (
+                      <tr key={`${s.name}-${s.purpose}`}>
+                        <Td><strong className="text-text">{s.name}</strong></Td>
+                        <Td>{s.purpose}</Td>
+                        <Td>{s.data}</Td>
+                        <Td>{s.location}</Td>
+                      </tr>
+                    ))}
                   </tbody>
                 </TableWrap>
+                <p>
+                  This list is maintained on our{' '}
+                  <Link href="/subprocessors" className="text-primary hover:underline">Subprocessors</Link>{' '}
+                  page, which always reflects our current providers and the transfer safeguards used.
+                </p>
                 <p>
                   We may also disclose personal data if required by law, court order, or governmental
                   authority, or to protect the rights, property, or safety of SPECTER, our users,
@@ -450,7 +423,7 @@ export default function PrivacyPage() {
                       <Td>Required for store sync</Td>
                     </tr>
                     <tr>
-                      <Td>Payment records (Stripe)</Td>
+                      <Td>Payment records (Razorpay)</Td>
                       <Td>7 years</Td>
                       <Td>Tax and accounting compliance</Td>
                     </tr>
@@ -480,10 +453,11 @@ export default function PrivacyPage() {
 
               <Section id="transfers" num="08" title="International Data Transfers">
                 <p>
-                  SPECTER is based in India and our sub-processors are primarily located in the
-                  United States. If you are in the European Economic Area (EEA), United Kingdom,
-                  or Switzerland, your personal data may be transferred to countries that do not
-                  have an adequacy decision from the relevant supervisory authority.
+                  SPECTER is based in India and our sub-processors are located in the United States and
+                  India (our payment processor, Razorpay, processes payment data in India). If you are in
+                  the European Economic Area (EEA), United Kingdom, or Switzerland, your personal data may
+                  be transferred to countries that do not have an adequacy decision from the relevant
+                  supervisory authority.
                 </p>
                 <p>
                   When we transfer EEA personal data to the United States or other third countries,
@@ -558,7 +532,7 @@ export default function PrivacyPage() {
                     'Shopify OAuth tokens stored encrypted and scoped to minimum necessary permissions',
                     'Regular security reviews and dependency updates',
                     'Access to production data limited to authorized personnel only',
-                    'No storage of payment card data — all payments processed through Stripe\'s PCI DSS certified infrastructure',
+                    'No storage of payment card data — all payments processed through Razorpay\'s PCI DSS certified infrastructure',
                   ].map((item) => (
                     <li key={item} className="flex items-start gap-2.5">
                       <span className="w-1 h-1 rounded-full bg-primary mt-2.5 shrink-0" />
@@ -609,18 +583,19 @@ export default function PrivacyPage() {
                       <Td>1 year</Td>
                     </tr>
                     <tr>
-                      <Td>__stripe_sid / __stripe_mid</Td>
+                      <Td>rzp_* (Razorpay)</Td>
                       <Td>Functional</Td>
-                      <Td>Stripe fraud prevention and checkout state</Td>
-                      <Td>30 minutes / 1 year</Td>
+                      <Td>Razorpay fraud prevention and secure checkout state</Td>
+                      <Td>Session / up to 1 year</Td>
                     </tr>
                   </tbody>
                 </TableWrap>
                 <p>
                   Essential cookies cannot be disabled as they are required for the service to function.
                   You may disable analytics cookies by adjusting your browser settings or using a browser
-                  extension such as uBlock Origin. Note that disabling cookies may affect your experience
-                  on the platform.
+                  extension such as uBlock Origin. Where required by EEA/UK law, non-essential analytics
+                  cookies are set only with your consent. For full details, see our dedicated{' '}
+                  <Link href="/cookies" className="text-primary hover:underline">Cookie Policy</Link>.
                 </p>
               </Section>
 
@@ -677,7 +652,11 @@ export default function PrivacyPage() {
                       hello@specterapp.io
                     </a>
                   </p>
-                  <p className="font-mono text-xs text-muted mt-3">
+                  <p className="mt-3 pt-3 border-t border-border/50">
+                    <strong className="text-text">All legal documents:</strong>{' '}
+                    <Link href="/legal" className="text-primary hover:underline">specterapp.io/legal</Link>
+                  </p>
+                  <p className="font-mono text-xs text-muted mt-2">
                     We will acknowledge your request within 5 business days and provide a full
                     response within 30 days.
                   </p>

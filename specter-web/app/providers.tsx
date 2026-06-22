@@ -16,6 +16,7 @@ import { useEffect } from 'react'
 import QueryProvider from '@/components/providers/query-provider'
 import SmoothScrollProvider from '@/components/providers/smooth-scroll'
 import PostHogProvider from '@/components/analytics/posthog-provider'
+import CookieConsentBanner from '@/components/analytics/cookie-consent-banner'
 import { createClient } from '@/lib/supabase/client'
 import { identifyUser, resetIdentity } from '@/lib/analytics'
 
@@ -46,6 +47,7 @@ export default function Providers({ children }: { children: React.ReactNode }) {
       <PostHogProvider>
         <SupabaseIdentity />
         <SmoothScrollProvider>{children}</SmoothScrollProvider>
+        <CookieConsentBanner />
       </PostHogProvider>
     </QueryProvider>
   )

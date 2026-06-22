@@ -26,9 +26,8 @@ const LINKS = {
     { label: 'Contact', href: 'mailto:hello@specterapp.io' },
   ],
   Legal: [
-    { label: 'Privacy Policy', href: '/privacy' },
     { label: 'Terms of Service', href: '/terms' },
-    { label: 'Security', href: '/security' },
+    { label: 'Privacy Policy', href: '/privacy' },
   ],
 }
 

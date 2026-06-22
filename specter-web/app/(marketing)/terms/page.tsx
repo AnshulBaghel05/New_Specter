@@ -25,9 +25,14 @@ const TOC = [
   { id: 'cancellation', label: 'Cancellation & Refunds' },
   { id: 'ip', label: 'Intellectual Property' },
   { id: 'confidentiality', label: 'Confidentiality & Data Isolation' },
+  { id: 'availability', label: 'Service Availability (No SLA)' },
+  { id: 'beta', label: 'Beta & Experimental Features' },
+  { id: 'api', label: 'API Usage' },
   { id: 'warranties', label: 'Disclaimer of Warranties' },
   { id: 'liability', label: 'Limitation of Liability' },
   { id: 'indemnification', label: 'Indemnification' },
+  { id: 'export', label: 'Export Controls & Sanctions' },
+  { id: 'data-processing', label: 'Data Processing & Privacy' },
   { id: 'governing-law', label: 'Governing Law' },
   { id: 'termination', label: 'Termination' },
   { id: 'general', label: 'General Provisions' },
@@ -376,9 +381,12 @@ export default function TermsPage() {
                   You authorize us to charge your payment method on file for each renewal.
                 </p>
                 <p>
-                  <strong className="text-text">Payment processing.</strong> All payments are
-                  processed by Stripe. By subscribing, you agree to Stripe&apos;s terms of service.
-                  We do not store your payment card details.
+                  <strong className="text-text">Payment processing.</strong> Payments are processed by
+                  Razorpay, and we may add or change payment processors over time. By subscribing, you
+                  agree to the applicable payment processor&apos;s terms. We do not store your full
+                  payment card details. Cancellations, renewals, refunds, and failed-payment handling
+                  are governed by our{' '}
+                  <Link href="/refunds" className="text-primary hover:underline">Refund &amp; Cancellation Policy</Link>.
                 </p>
                 <p>
                   <strong className="text-text">Failed payments.</strong> If a payment fails,
@@ -505,7 +513,48 @@ export default function TermsPage() {
                 </p>
               </Section>
 
-              <Section id="warranties" num="14" title="Disclaimer of Warranties">
+              <Section id="availability" num="14" title="Service Availability (No SLA)">
+                <p>
+                  We work hard to keep SPECTER available, but the platform is provided{' '}
+                  <strong className="text-text">without a contractual uptime guarantee or service-level
+                  agreement (SLA)</strong> unless a separate written SLA is agreed for an enterprise plan.
+                  Access may be interrupted for maintenance, updates, or factors beyond our control,
+                  including failures of third-party platforms (Shopify, WooCommerce, hosting, payment,
+                  or AI providers) and competitor websites blocking or changing their pages.
+                </p>
+                <p>
+                  Data-collection frequency is {`best-efforts and plan-dependent`}, and a failure to
+                  collect from any given competitor URL is not a service defect. Our goodwill credit for
+                  extended outages is described in the{' '}
+                  <Link href="/refunds" className="text-primary hover:underline">Refund &amp; Cancellation Policy</Link>.
+                </p>
+              </Section>
+
+              <Section id="beta" num="15" title="Beta & Experimental Features">
+                <p>
+                  We may offer features labelled beta, preview, early access, or experimental
+                  (&quot;Beta Features&quot;). Beta Features are provided{' '}
+                  <strong className="text-text">&quot;as is&quot; for evaluation</strong>, may be changed
+                  or withdrawn at any time, may be less reliable than generally available features, and
+                  are excluded from any warranty, support commitment, or outage credit. Your use of Beta
+                  Features is at your own risk, and we may collect feedback and usage data to improve them.
+                </p>
+              </Section>
+
+              <Section id="api" num="16" title="API Usage">
+                <p>
+                  If we provide API or programmatic access, your use is subject to the published rate
+                  limits and quotas for your plan and to our{' '}
+                  <Link href="/acceptable-use" className="text-primary hover:underline">Acceptable Use Policy</Link>.
+                  You must keep API credentials confidential, must not exceed or circumvent limits, and
+                  must not use the API to replicate the platform, build a competing dataset, or access
+                  another customer&apos;s data. We may throttle, suspend, or revoke API access to protect
+                  platform stability, security, or fair use, and we may change or deprecate API
+                  functionality with reasonable notice.
+                </p>
+              </Section>
+
+              <Section id="warranties" num="17" title="Disclaimer of Warranties">
                 <p className="uppercase text-[13px] font-mono tracking-wide text-text/80 leading-loose">
                   THE SPECTER PLATFORM AND FREE TOOLS ARE PROVIDED &quot;AS IS&quot; AND &quot;AS AVAILABLE&quot;
                   WITHOUT WARRANTIES OF ANY KIND, WHETHER EXPRESS, IMPLIED, STATUTORY, OR OTHERWISE.
@@ -525,7 +574,7 @@ export default function TermsPage() {
                 </p>
               </Section>
 
-              <Section id="liability" num="15" title="Limitation of Liability">
+              <Section id="liability" num="18" title="Limitation of Liability">
                 <p className="uppercase text-[13px] font-mono tracking-wide text-text/80 leading-loose">
                   TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT WILL SPECTER,
                   ITS OFFICERS, DIRECTORS, EMPLOYEES, AGENTS, LICENSORS, OR SERVICE PROVIDERS
@@ -551,7 +600,7 @@ export default function TermsPage() {
                 </p>
               </Section>
 
-              <Section id="indemnification" num="16" title="Indemnification">
+              <Section id="indemnification" num="19" title="Indemnification">
                 <p>
                   You agree to defend, indemnify, and hold harmless SPECTER and its officers,
                   directors, employees, and agents from and against any claims, damages, losses,
@@ -579,7 +628,40 @@ export default function TermsPage() {
                 </p>
               </Section>
 
-              <Section id="governing-law" num="17" title="Governing Law">
+              <Section id="export" num="20" title="Export Controls & Sanctions">
+                <p>
+                  You must comply with all applicable export control and economic-sanctions laws,
+                  including those of India, the United States, the European Union, and the United
+                  Kingdom. You represent and warrant that you are not located in, ordinarily resident in,
+                  or organised under the laws of any country or region subject to comprehensive sanctions,
+                  and that you are not a person with whom dealings are prohibited under applicable
+                  sanctions or denied-party lists.
+                </p>
+                <p>
+                  You agree not to use, export, or re-export the SPECTER platform in violation of those
+                  laws, and not to provide access to any prohibited person. We may suspend or terminate
+                  access where we reasonably believe continued provision would breach sanctions or export
+                  laws.
+                </p>
+              </Section>
+
+              <Section id="data-processing" num="21" title="Data Processing & Privacy">
+                <p>
+                  Our handling of personal data is described in our{' '}
+                  <Link href="/privacy" className="text-primary hover:underline">Privacy Policy</Link>.
+                  Where we process personal data on your behalf as a processor, that processing is
+                  governed by our{' '}
+                  <Link href="/dpa" className="text-primary hover:underline">Data Processing Addendum</Link>{' '}
+                  (&quot;DPA&quot;), which is incorporated into these Terms by reference and which prevails
+                  over these Terms to the extent of any conflict on data-protection matters. The third
+                  parties in our data path are listed on our{' '}
+                  <Link href="/subprocessors" className="text-primary hover:underline">Subprocessors</Link>{' '}
+                  page. You are responsible for ensuring you have any consents or notices required for the
+                  data you submit, and for not submitting special-category personal data.
+                </p>
+              </Section>
+
+              <Section id="governing-law" num="22" title="Governing Law">
                 <p>
                   These Terms are governed by and construed in accordance with the laws of India,
                   without regard to its conflict of law provisions.
@@ -605,7 +687,7 @@ export default function TermsPage() {
                 </p>
               </Section>
 
-              <Section id="termination" num="18" title="Termination">
+              <Section id="termination" num="23" title="Termination">
                 <p>
                   <strong className="text-text">By you.</strong> You may stop using SPECTER and
                   cancel your subscription at any time through the dashboard.
@@ -635,11 +717,17 @@ export default function TermsPage() {
                 </p>
               </Section>
 
-              <Section id="general" num="19" title="General Provisions">
+              <Section id="general" num="24" title="General Provisions">
                 <p>
-                  <strong className="text-text">Entire agreement.</strong> These Terms, together with
-                  our Privacy Policy and any order forms or plan documentation, constitute the entire
-                  agreement between you and SPECTER and supersede all prior understandings.
+                  <strong className="text-text">Entire agreement.</strong> These Terms, together with our{' '}
+                  <Link href="/privacy" className="text-primary hover:underline">Privacy Policy</Link>,{' '}
+                  <Link href="/acceptable-use" className="text-primary hover:underline">Acceptable Use Policy</Link>,{' '}
+                  <Link href="/scraping-policy" className="text-primary hover:underline">Web Scraping Policy</Link>,{' '}
+                  <Link href="/ai-disclosure" className="text-primary hover:underline">AI &amp; Automated Decisions Disclosure</Link>,{' '}
+                  <Link href="/refunds" className="text-primary hover:underline">Refund &amp; Cancellation Policy</Link>,{' '}
+                  <Link href="/dpa" className="text-primary hover:underline">Data Processing Addendum</Link>, and any
+                  order forms or plan documentation, constitute the entire agreement between you and
+                  SPECTER and supersede all prior understandings.
                 </p>
                 <p>
                   <strong className="text-text">Severability.</strong> If any provision of these Terms
@@ -669,7 +757,7 @@ export default function TermsPage() {
                 </p>
               </Section>
 
-              <Section id="contact" num="20" title="Contact">
+              <Section id="contact" num="25" title="Contact">
                 <div className="bg-surface border border-border rounded-xl p-5 space-y-2">
                   <p><strong className="text-text">Legal inquiries:</strong>{' '}
                     <a href="mailto:legal@specterapp.io" className="text-primary hover:underline">
@@ -686,7 +774,11 @@ export default function TermsPage() {
                       specterapp.io/contact
                     </Link>
                   </p>
-                  <p className="font-mono text-xs text-muted pt-2 border-t border-border/50">
+                  <p className="pt-2 border-t border-border/50">
+                    <strong className="text-text">All legal documents:</strong>{' '}
+                    <Link href="/legal" className="text-primary hover:underline">specterapp.io/legal</Link>
+                  </p>
+                  <p className="font-mono text-xs text-muted">
                     We aim to respond to all legal inquiries within 5 business days.
                   </p>
                 </div>

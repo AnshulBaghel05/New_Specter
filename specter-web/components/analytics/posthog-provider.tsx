@@ -1,24 +1,39 @@
 'use client'
 
-import { useEffect, Suspense } from 'react'
+import { useEffect, useState, Suspense } from 'react'
 import { usePathname, useSearchParams } from 'next/navigation'
 import { initPostHog, trackPageView } from '@/lib/analytics'
+import { getConsent, onConsentChange } from '@/lib/consent'
 
 function PostHogPageTracker() {
   const pathname = usePathname()
   const searchParams = useSearchParams()
+  // Analytics stays dormant until the visitor has opted in — no PostHog init,
+  // and therefore no analytics cookies/storage, before consent.
+  const [ready, setReady] = useState(false)
 
   useEffect(() => {
-    initPostHog()
+    if (getConsent() === 'granted') {
+      initPostHog()
+      setReady(true)
+    }
+    // React the moment consent is granted later in the session (banner click),
+    // without requiring a page reload.
+    return onConsentChange((status) => {
+      if (status === 'granted') {
+        initPostHog()
+        setReady(true)
+      }
+    })
   }, [])
 
   useEffect(() => {
-    if (!pathname) return
+    if (!ready || !pathname) return
     const url = searchParams.toString()
       ? `${pathname}?${searchParams.toString()}`
       : pathname
     trackPageView(url)
-  }, [pathname, searchParams])
+  }, [ready, pathname, searchParams])
 
   return null
 }
