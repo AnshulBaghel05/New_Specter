@@ -85,7 +85,7 @@ async def attribution_csv(
     rows = (await session.execute(
         select(PriceChange, SKU.title)
         .join(SKU, PriceChange.sku_id == SKU.id)
-        .where(SKU.merchant_id == merchant.id, PriceChange.source == "auto")
+        .where(SKU.merchant_id == merchant.id, PriceChange.source.in_(("auto", "manual")))
         .order_by(PriceChange.created_at.desc())
     )).all()
 
