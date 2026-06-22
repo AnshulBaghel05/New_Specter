@@ -2,21 +2,14 @@
 
 import { useState } from 'react'
 import { Store, CheckCircle2, AlertTriangle } from 'lucide-react'
-import { useDisconnectShopify, shopifyOAuthUrl, type Merchant } from '@/lib/api'
+import { useDisconnectShopify, type Merchant } from '@/lib/api'
 import { toast } from '@/lib/toast'
 import SettingsCard from './settings-card'
+import ShopifyConnectModal from './shopify-connect-modal'
 
 export default function ShopifyCard({ merchant }: { merchant: Merchant }) {
   const disconnect = useDisconnectShopify()
-  const [shop, setShop] = useState('')
-
-  async function connect() {
-    const trimmed = shop.trim().replace(/^https?:\/\//, '')
-    if (!trimmed) return
-    const url = await shopifyOAuthUrl(trimmed)
-    if (url) window.location.href = url
-    else toast.error('Your session expired — sign in again to connect Shopify.')
-  }
+  const [modalOpen, setModalOpen] = useState(false)
 
   if (merchant.shopify_connected && !merchant.shopify_reconnect_required) {
     return (
@@ -60,43 +53,38 @@ export default function ShopifyCard({ merchant }: { merchant: Merchant }) {
           </div>
         </div>
         <button
-          onClick={async () => {
-            if (!merchant.shopify_domain) return
-            const url = await shopifyOAuthUrl(merchant.shopify_domain)
-            if (url) window.location.href = url
-            else toast.error('Your session expired — sign in again to reconnect.')
-          }}
+          onClick={() => setModalOpen(true)}
           className="gradient-primary-cta btn-ripple self-start px-5 py-2.5 rounded-xl font-semibold text-sm transition-all duration-200"
         >
           Reconnect Shopify
         </button>
+        <ShopifyConnectModal
+          open={modalOpen}
+          onClose={() => setModalOpen(false)}
+          title="Reconnect your Shopify store"
+        />
       </SettingsCard>
     )
   }
 
   return (
     <SettingsCard title="Shopify">
-      <div className="flex items-center gap-3">
-        <Store size={20} className="text-muted shrink-0" aria-hidden="true" />
-        <p className="font-body text-sm text-muted">Connect your store to import products and enable auto-repricing.</p>
+      <div className="flex flex-col gap-1">
+        <div className="flex items-center gap-3">
+          <Store size={20} className="text-muted shrink-0" aria-hidden="true" />
+          <p className="font-body text-sm text-text">Connect your store</p>
+        </div>
+        <p className="font-body text-sm text-muted pl-8">
+          Import products and enable auto-repricing. You&rsquo;ll approve access securely on Shopify.
+        </p>
       </div>
-      <div className="flex items-stretch gap-2">
-        <input
-          type="text"
-          value={shop}
-          onChange={(e) => setShop(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && connect()}
-          placeholder="your-store.myshopify.com"
-          className="flex-1 bg-bg border border-border rounded-xl px-3.5 py-2.5 font-mono text-sm text-text placeholder:text-muted focus:outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/20 transition-all"
-        />
-        <button
-          onClick={connect}
-          disabled={!shop.trim()}
-          className="gradient-primary-cta btn-ripple px-5 rounded-xl font-semibold text-sm disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200"
-        >
-          Connect
-        </button>
-      </div>
+      <button
+        onClick={() => setModalOpen(true)}
+        className="gradient-primary-cta btn-ripple self-start px-5 py-2.5 rounded-xl font-semibold text-sm transition-all duration-200 inline-flex items-center gap-2"
+      >
+        <Store size={16} aria-hidden="true" /> Connect Shopify
+      </button>
+      <ShopifyConnectModal open={modalOpen} onClose={() => setModalOpen(false)} />
     </SettingsCard>
   )
 }

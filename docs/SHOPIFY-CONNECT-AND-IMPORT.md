@@ -4,10 +4,12 @@ A simple, step-by-step guide for merchants.
 
 ## 1. Connect your store
 1. Go to **Settings** in your SPECTER dashboard.
-2. Find the **Shopify** card and type your store address — `your-store.myshopify.com`.
-3. Click **Connect**. You'll be sent to Shopify to approve access.
-4. Approve the requested permissions (read products, update product prices, read
-   orders — the last one powers revenue attribution).
+2. Find the **Shopify** card and click **Connect Shopify**.
+3. In the pop-up, enter just your store name (we add `.myshopify.com` for you) and
+   click **Continue to Shopify**.
+4. Approve the requested permissions on Shopify (read products, update product
+   prices, read orders — the last one powers revenue attribution). We never see
+   your password.
 5. You'll land back in SPECTER with the store showing **Connected**.
 
 > If you ever see **"Reconnect required"**, your Shopify access expired — click
