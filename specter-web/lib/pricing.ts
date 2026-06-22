@@ -9,11 +9,19 @@
  * plan IDs (see docs/PRICING.md "Temporary promotion runbook").
  */
 
-/** Plans currently displayed at 100% off. Empty this array to end the promo. */
-export const PROMO_FREE_PLANS: readonly string[] = ['recon', 'cipher', 'phantom']
+/** Plans currently displayed at 100% off. Empty = no promo (list pricing).
+ *  To run the promo again, add e.g. ['recon','cipher','phantom'] AND re-point
+ *  the Razorpay RAZORPAY_PLAN_* IDs to $0 promo plans (see docs/PRICING.md). */
+export const PROMO_FREE_PLANS: readonly string[] = []
 
 /** Badge shown on promo cards. */
 export const PROMO_BADGE = 'Limited-time 100% off'
+
+/** True when any plan is on the 100% promo. Drives promo banners + badges so
+ *  the whole promo is one switch (PROMO_FREE_PLANS) with no stale copy. */
+export function isPromoActive(): boolean {
+  return PROMO_FREE_PLANS.length > 0
+}
 
 /** Annual billing discount as a fraction of the monthly rate. */
 export const ANNUAL_DISCOUNT = 0.15

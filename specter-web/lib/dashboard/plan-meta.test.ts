@@ -3,17 +3,17 @@ import { planMeta, PLAN_META } from './plan-meta'
 
 describe('planMeta', () => {
   it('returns display meta for each known plan', () => {
-    // RECON is in the temporary 100% promo → price label reads $0/mo.
-    expect(planMeta('recon')).toEqual({ label: 'RECON', listMonthly: 79, priceLabel: '$0/mo', refreshLabel: 'every 6 hr', priorityLabel: 'Standard queue' })
+    // No promo active → RECON shows its list price.
+    expect(planMeta('recon')).toEqual({ label: 'RECON', listMonthly: 79, priceLabel: '$79/mo', refreshLabel: 'every 6 hr', priorityLabel: 'Standard queue' })
     expect(planMeta('eclipse').refreshLabel).toBe('5–15 min')
     expect(planMeta('eclipse').priorityLabel).toBe('Dedicated workers')
     expect(planMeta('free')).toEqual({ label: 'Free', listMonthly: 0, priceLabel: '$0', refreshLabel: '—', priorityLabel: null })
   })
 
-  it('reflects the promo on RECON/CIPHER/PHANTOM but not PREDATOR/ECLIPSE', () => {
-    expect(planMeta('cipher').priceLabel).toBe('$0/mo')
-    expect(planMeta('phantom').priceLabel).toBe('$0/mo')
-    expect(planMeta('predator').priceLabel).toBe('$1,799/mo')   // not in promo → list price
+  it('shows list pricing for every paid plan (no promo active)', () => {
+    expect(planMeta('cipher').priceLabel).toBe('$249/mo')
+    expect(planMeta('phantom').priceLabel).toBe('$699/mo')
+    expect(planMeta('predator').priceLabel).toBe('$1,799/mo')
     expect(planMeta('eclipse').priceLabel).toBe('Custom')
   })
 

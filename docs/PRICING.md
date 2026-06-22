@@ -35,13 +35,15 @@ Value-based pricing anchored to measurable merchant ROI. A merchant doing $1M GM
 
 **Annual discount:** 15% off on **RECON, CIPHER, PHANTOM only**. Applied via Razorpay plan selection at checkout. **PREDATOR has no annual discount** — it is billed at the same rate (12× monthly) whether monthly or annual. ECLIPSE pricing is negotiated directly — no self-serve annual toggle.
 
-> ### ⏳ Temporary promotion — RECON / CIPHER / PHANTOM 100% off
+> ### Promotion status — RECON / CIPHER / PHANTOM: **OFF (list pricing in effect)**
 >
-> A **temporary promotional 100% discount** is currently displayed on RECON, CIPHER, and PHANTOM. This is a removable promo layer **only** — the list prices above, the plan hierarchy, feature allocation, and billing architecture are **unchanged**. PREDATOR and ECLIPSE are **not** part of the promo.
+> The temporary 100%-off promo is **currently disabled** — RECON ($79), CIPHER ($249), and PHANTOM ($699) display and bill at list price. The promo is a removable display layer only; list prices, plan hierarchy, feature allocation, and billing architecture are unchanged.
 >
-> **Where it lives (display):** `specter-web/lib/pricing.ts` → `PROMO_FREE_PLANS = ['recon','cipher','phantom']`. Every UI surface (pricing page, homepage pricing section, dashboard settings label) derives its display from this one constant.
+> **Where it lives (display):** `specter-web/lib/pricing.ts` → `PROMO_FREE_PLANS` (currently `[]`). `isPromoActive()` derives from it and gates every promo banner + per-card badge, so the whole promo is one switch with no stale copy. Every price surface derives its number from this constant + `lib/dashboard/plan-meta.ts` list prices.
 >
-> **To END the promo (display):** set `PROMO_FREE_PLANS = []` in `specter-web/lib/pricing.ts`. All surfaces revert to list pricing automatically; nothing else in code needs to change.
+> **To RE-ENABLE the promo (display):** set `PROMO_FREE_PLANS = ['recon','cipher','phantom']` in `specter-web/lib/pricing.ts`. All banners, badges, and prices flip automatically.
+>
+> ⚠️ **Billing must match display (no profit loss).** Display and billing are separate. Whenever you change the promo, also align the Razorpay side (below) so the amount charged equals the amount shown — otherwise users see one price and are charged another.
 >
 > **To make the promo real / revert it (Razorpay — billing is plan-ID driven, no amounts in code):**
 > 1. **Apply 100% off:** in the Razorpay dashboard, attach a 100%-off offer to the RECON/CIPHER/PHANTOM subscription plans, **or** point `RAZORPAY_PLAN_RECON_MONTHLY`, `RAZORPAY_PLAN_CIPHER_MONTHLY`, `RAZORPAY_PLAN_PHANTOM_MONTHLY` (and the `_ANNUAL` vars) at $0 promo plans.

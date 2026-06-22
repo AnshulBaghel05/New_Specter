@@ -10,7 +10,7 @@ import { Check, X, Zap, ArrowRight, HelpCircle, ChevronDown } from 'lucide-react
 import { cn } from '@/lib/utils'
 import PlanContactModal from '@/components/marketing/plan-contact-modal'
 import { CONTACT_PLANS } from '@/lib/marketing/contact-plans'
-import { priceDisplay, PROMO_BADGE, ANNUAL_DISCOUNT_PCT } from '@/lib/pricing'
+import { priceDisplay, PROMO_BADGE, ANNUAL_DISCOUNT_PCT, isPromoActive } from '@/lib/pricing'
 import { createClient } from '@/lib/supabase/client'
 import { saveIntent } from '@/lib/billing/intent'
 import { useStartTrial, useSubscribe, type SelfServePlan } from '@/lib/api'
@@ -498,10 +498,12 @@ export default function PricingPage() {
         <section className="pt-32 pb-16 px-6 bg-bg relative overflow-hidden">
           <div className="absolute inset-0 bg-[radial-gradient(ellipse_70%_50%_at_50%_0%,rgba(0,232,122,0.06),transparent)] pointer-events-none" />
           <div ref={heroRef} className="max-w-3xl mx-auto text-center relative">
-            <div className="inline-flex items-center gap-2 border border-primary/30 bg-primary/5 text-primary text-xs font-mono uppercase tracking-widest px-4 py-1.5 rounded-full mb-8 animate-border-glow">
-              <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
-              Limited time — RECON, CIPHER &amp; PHANTOM 100% off
-            </div>
+            {isPromoActive() && (
+              <div className="inline-flex items-center gap-2 border border-primary/30 bg-primary/5 text-primary text-xs font-mono uppercase tracking-widest px-4 py-1.5 rounded-full mb-8 animate-border-glow">
+                <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
+                Limited time — RECON, CIPHER &amp; PHANTOM 100% off
+              </div>
+            )}
             <h1
               className="font-display font-bold text-text mb-5"
               style={{ fontSize: 'clamp(2.4rem, 5vw, 3.8rem)', letterSpacing: '-0.03em', lineHeight: 1.05 }}
@@ -674,7 +676,9 @@ export default function PricingPage() {
               </Link>
             </div>
             <p className="font-body text-xs text-muted mt-6">
-              Limited time: RECON, CIPHER & PHANTOM 100% off · PREDATOR $1,799/mo · ECLIPSE custom
+              {isPromoActive()
+                ? 'Limited time: RECON, CIPHER & PHANTOM 100% off · PREDATOR $1,799/mo · ECLIPSE custom'
+                : 'RECON $79/mo · CIPHER $249/mo · PHANTOM $699/mo · PREDATOR $1,799/mo · ECLIPSE custom'}
             </p>
           </div>
         </section>

@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { Check, Zap } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useScrollReveal } from '@/hooks/use-scroll-reveal'
-import { priceDisplay, PROMO_BADGE, ANNUAL_DISCOUNT_PCT } from '@/lib/pricing'
+import { priceDisplay, PROMO_BADGE, ANNUAL_DISCOUNT_PCT, isPromoActive } from '@/lib/pricing'
 
 interface Tier {
   name: string
@@ -116,7 +116,9 @@ export default function PricingSection() {
             <span className="text-primary">No surprises.</span>
           </h2>
           <p className="font-body text-muted max-w-xl mx-auto mb-8">
-            Limited time — RECON, CIPHER &amp; PHANTOM are 100% off. No credit card required.
+            {isPromoActive()
+              ? 'Limited time — RECON, CIPHER & PHANTOM are 100% off. No credit card required.'
+              : 'Simple, transparent pricing. Start with a 14-day trial — no credit card required.'}
           </p>
 
           {/* Toggle */}
